@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Fullscreen, no title bar. Uses a platform theme so we don't need to
+         pull in AppCompat/AndroidX just to host the SDL GL surface. -->
+    <style name="AppTheme" parent="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
+</resources>

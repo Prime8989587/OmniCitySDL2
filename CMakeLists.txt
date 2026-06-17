@@ -23,6 +23,39 @@ set(SOURCES
     src/Game.cpp
 )
 
+# ---------------------------------------------------------------------------
+# Android: build the game as libmain.so and compile SDL2 from source as a
+# subproject. The Gradle externalNativeBuild invokes this file directly and
+# passes SDL_SRC_DIR (see android/fetch-sdl.sh and android/app/build.gradle).
+# ---------------------------------------------------------------------------
+if(ANDROID)
+    if(NOT DEFINED SDL_SRC_DIR OR SDL_SRC_DIR STREQUAL "")
+        set(SDL_SRC_DIR "$ENV{SDL_SRC_DIR}")
+    endif()
+    if(NOT SDL_SRC_DIR OR NOT EXISTS "${SDL_SRC_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR
+            "SDL_SRC_DIR must point to the SDL2 source tree. "
+            "Run android/fetch-sdl.sh first. Got: '${SDL_SRC_DIR}'")
+    endif()
+
+    add_subdirectory("${SDL_SRC_DIR}" "${CMAKE_BINARY_DIR}/SDL")
+
+    # SDLActivity loads libmain.so by default; the target must be named "main".
+    add_library(main SHARED ${SOURCES})
+    target_compile_options(main PRIVATE -Wall -Wextra -O2)
+
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(main PRIVATE SDL2::SDL2)
+    else()
+        target_link_libraries(main PRIVATE SDL2)
+    endif()
+    if(TARGET SDL2::SDL2main)
+        target_link_libraries(main PRIVATE SDL2::SDL2main)
+    endif()
+
+    return()  # skip the desktop executable/discovery below
+endif()
+
 add_executable(CristiVerse ${SOURCES})
 
 # ---------------------------------------------------------------------------

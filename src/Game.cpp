@@ -12,11 +12,27 @@ static const int   kNumSpeeds = 4;
 static const int   HUD_H   = 48;
 static const int   SIDE_W  = 308;
 
+// Where the runtime config lives. On Android the working directory is not
+// writable, so we use SDL's per-app preferences directory; elsewhere we keep
+// the historical behavior of a file next to the executable.
+static std::string configPath() {
+#ifdef __ANDROID__
+    char* pref = SDL_GetPrefPath("CristiVerse", "CristiVerse");
+    if (pref) {
+        std::string p = std::string(pref) + "cristiverse.cfg";
+        SDL_free(pref);
+        return p;
+    }
+#endif
+    return "cristiverse.cfg";
+}
+
 // =====================================================================
 // Lifecycle
 // =====================================================================
 bool Game::init() {
-    settings().loadFromFile("cristiverse.cfg");
+    setupMobile();                       // hints + mobile-tuned defaults (before init)
+    settings().loadFromFile(configPath());
     auto& s = settings();
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -24,8 +40,12 @@ bool Game::init() {
         return false;
     }
 
+#ifdef __ANDROID__
+    Uint32 flags = SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN;  // phone owns the size
+#else
     Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
     if (s.fullscreen) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+#endif
     win_ = SDL_CreateWindow("CristiVerse — LogOS Engine (SDL2)",
                             SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                             s.screenW, s.screenH, flags);
@@ -39,6 +59,26 @@ bool Game::init() {
     }
     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
 
+    // Physical drawable size (used to map normalized touch coords).
+    SDL_GetRendererOutputSize(ren_, &winPxW_, &winPxH_);
+#ifdef __ANDROID__
+    // Render at a comfortable logical resolution so text stays legible and touch
+    // targets stay finger-sized on high-DPI phones; SDL scales the geometry to
+    // the physical screen. The canvas is forced landscape.
+    {
+        int pxLong  = std::max(winPxW_, winPxH_);
+        int pxShort = std::max(1, std::min(winPxW_, winPxH_));
+        const int targetH = 620;                          // logical short side
+        int logH = targetH;
+        int logW = (int)std::lround((double)targetH * pxLong / pxShort);
+        logW = std::max(logW, 900);                        // sane minimum width
+        SDL_RenderSetLogicalSize(ren_, logW, logH);
+        s.screenW = logW; s.screenH = logH;
+        logicalActive_ = true;
+        SDL_Log("CristiVerse: %dx%d physical -> %dx%d logical", winPxW_, winPxH_, logW, logH);
+    }
+#endif
+
     audio_.init(); // soft-fails when no device
 
     world_.regenerate();
@@ -48,6 +88,25 @@ bool Game::init() {
     state_ = GState::Menu;
     fade_ = 1.0f;
     return true;
+}
+
+// Touch builds: make finger events authoritative and lock orientation. The
+// hints are harmless on platforms where they do not apply.
+void Game::setupMobile() {
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");   // no synthetic mouse from touch
+    SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");   // no synthetic touch from mouse
+#ifdef __ANDROID__
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    // Defaults tuned for a steady 60fps on low-end phones (weak GPU/CPU).
+    auto& s = settings();
+    s.numAgents    = 700;
+    s.numBuildings = 44;
+    s.numTrees     = 80;
+    s.worldW       = 2000.0f;
+    s.worldH       = 2000.0f;
+    s.vsync        = true;
+    s.fullscreen   = true;
+#endif
 }
 
 bool Game::initHeadless() {
@@ -83,7 +142,7 @@ void Game::captureFrames(const char* path, int frames) {
 }
 
 void Game::shutdown() {
-    if (win_) settings().saveToFile("cristiverse.cfg"); // only persist for real sessions
+    if (win_) settings().saveToFile(configPath()); // only persist for real sessions
     audio_.shutdown();
     if (ren_) SDL_DestroyRenderer(ren_);
     if (shotSurface_) SDL_FreeSurface(shotSurface_);
@@ -122,10 +181,23 @@ void Game::handleEvents() {
             running_ = false;
             break;
 
+        // Android sends these around app suspend/resume; pause the sim so we
+        // don't burn battery (and the GL context) while in the background.
+        case SDL_APP_WILLENTERBACKGROUND:
+        case SDL_APP_DIDENTERBACKGROUND:
+            if (state_ == GState::Playing) state_ = GState::Paused;
+            break;
+
         case SDL_WINDOWEVENT:
             if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-                settings().screenW = e.window.data1;
-                settings().screenH = e.window.data2;
+                if (logicalActive_) {
+                    // Logical canvas is fixed; just refresh the physical size
+                    // used to map normalized touch coordinates.
+                    SDL_GetRendererOutputSize(ren_, &winPxW_, &winPxH_);
+                } else {
+                    settings().screenW = e.window.data1;
+                    settings().screenH = e.window.data2;
+                }
                 layoutView();
             }
             break;
@@ -147,19 +219,7 @@ void Game::handleEvents() {
             in_.mouseX = e.button.x; in_.mouseY = e.button.y;
             if (e.button.button == SDL_BUTTON_LEFT) {
                 in_.mouseDown = true; in_.mousePressed = true;
-                bool inWorld = (state_ == GState::Playing) &&
-                               e.button.x < view_.viewX + view_.viewW &&
-                               e.button.y > view_.viewY;
-                if (inWorld) {
-                    if (tool_ != Tool::None) {
-                        deployAt(e.button.x, e.button.y);
-                    } else {
-                        float wx, wy; view_.screenToWorld(e.button.x, e.button.y, wx, wy);
-                        int id = world_.pickAgentNear(wx, wy, 14.0f / view_.cam.zoom);
-                        selectedId_ = id;
-                        if (id >= 0) audio_.select();
-                    }
-                }
+                worldClickAt(e.button.x, e.button.y, 14.0f);
             } else if (e.button.button == SDL_BUTTON_RIGHT ||
                        e.button.button == SDL_BUTTON_MIDDLE) {
                 dragging_ = true; lastMx_ = e.button.x; lastMy_ = e.button.y;
@@ -185,14 +245,25 @@ void Game::handleEvents() {
             break;
         }
 
+        case SDL_FINGERDOWN:
+            onFingerDown(e.tfinger.fingerId, e.tfinger.x, e.tfinger.y);
+            break;
+        case SDL_FINGERMOTION:
+            onFingerMotion(e.tfinger.fingerId, e.tfinger.x, e.tfinger.y);
+            break;
+        case SDL_FINGERUP:
+            onFingerUp(e.tfinger.fingerId, e.tfinger.x, e.tfinger.y);
+            break;
+
         case SDL_KEYDOWN: {
             SDL_Keycode k = e.key.keysym.sym;
-            if (k == SDLK_ESCAPE) {
+            // Android's hardware/gesture Back maps to the same "step out" flow.
+            if (k == SDLK_ESCAPE || k == SDLK_AC_BACK) {
                 // "Back" walks one step out: Playing -> Paused -> Menu -> quit.
                 if (state_ == GState::Playing)       state_ = GState::Paused;
                 else if (state_ == GState::Paused)   { state_ = GState::Menu; fade_ = 0.6f; }
                 else if (state_ == GState::Settings) {
-                    settings().saveToFile("cristiverse.cfg");
+                    settings().saveToFile(configPath());
                     state_ = prevState_;
                 } else if (state_ == GState::Help)   state_ = prevState_;
                 else if (state_ == GState::GameOver) state_ = GState::Menu;
@@ -223,6 +294,142 @@ void Game::handleEvents() {
         }
         default: break;
         }
+    }
+}
+
+// =====================================================================
+// Touch input (mobile) — gesture recognition layered on SDL finger events.
+//
+// Design: SDL's touch->mouse synthesis is disabled on touch builds (see
+// setupMobile), so finger events are the single source of truth. The primary
+// finger mirrors into InputState so the immediate-mode UI (menus, sidebar,
+// sliders) keeps working unchanged. The world view adds gestures on top:
+//   * single-finger tap   -> select agent / deploy tool
+//   * single-finger drag  -> pan camera
+//   * two-finger pinch     -> zoom
+// =====================================================================
+namespace { constexpr float kTapSlop = 9.0f; }  // logical px before a tap becomes a drag
+
+// Convert a normalized SDL finger coordinate (0..1 over the window) into the
+// logical render-coordinate space the game draws in.
+void Game::fingerToLogical(float nx, float ny, int& lx, int& ly) const {
+    int px = (int)std::lround(nx * (winPxW_ > 0 ? winPxW_ : settings().screenW));
+    int py = (int)std::lround(ny * (winPxH_ > 0 ? winPxH_ : settings().screenH));
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+    if (logicalActive_) {
+        float fx = 0.0f, fy = 0.0f;
+        SDL_RenderWindowToLogical(ren_, px, py, &fx, &fy);  // accounts for letterbox
+        lx = (int)std::lround(fx);
+        ly = (int)std::lround(fy);
+        return;
+    }
+#endif
+    lx = px; ly = py;
+}
+
+void Game::onFingerDown(SDL_FingerID id, float nx, float ny) {
+    int lx, ly; fingerToLogical(nx, ny, lx, ly);
+    if (touchCount_ == 0) {
+        // Primary finger: arm a potential tap and mirror to the UI cursor.
+        f0Id_ = id; f0x_ = (float)lx; f0y_ = (float)ly;
+        touchStartX_ = (float)lx; touchStartY_ = (float)ly;
+        touchMoved_ = false;
+        pinching_ = false;
+        touchInWorld_ = (state_ == GState::Playing || state_ == GState::Paused) &&
+                        lx < view_.viewX + view_.viewW && ly > view_.viewY;
+        in_.mouseX = lx; in_.mouseY = ly;
+        in_.mouseDown = true; in_.mousePressed = true;
+        touchCount_ = 1;
+    } else if (touchCount_ == 1) {
+        // Second finger: start a pinch and cancel the pending tap / UI press.
+        f1Id_ = id; f1x_ = (float)lx; f1y_ = (float)ly;
+        pinching_ = true;
+        touchMoved_ = true;          // never fire a tap once two fingers are down
+        in_.mouseDown = false;       // abort any UI press the first finger started
+        pinchLastDist_ = std::hypot(f1x_ - f0x_, f1y_ - f0y_);
+        touchCount_ = 2;
+    } else {
+        touchCount_++;               // ignore 3rd+ fingers
+    }
+}
+
+void Game::onFingerMotion(SDL_FingerID id, float nx, float ny) {
+    int lx, ly; fingerToLogical(nx, ny, lx, ly);
+    if (pinching_) {
+        if      (id == f0Id_) { f0x_ = (float)lx; f0y_ = (float)ly; }
+        else if (id == f1Id_) { f1x_ = (float)lx; f1y_ = (float)ly; }
+        float dist = std::hypot(f1x_ - f0x_, f1y_ - f0y_);
+        if (pinchLastDist_ > 1.0f && dist > 1.0f &&
+            (state_ == GState::Playing || state_ == GState::Paused)) {
+            float ratio = dist / pinchLastDist_;
+            view_.cam.tzoom = clampf(view_.cam.tzoom * ratio, 0.12f, 6.0f);
+        }
+        pinchLastDist_ = dist;
+        return;
+    }
+    if (id != f0Id_) return;
+    float dx = (float)lx - f0x_, dy = (float)ly - f0y_;
+    f0x_ = (float)lx; f0y_ = (float)ly;
+    in_.mouseX = lx; in_.mouseY = ly;
+    if (std::hypot((float)lx - touchStartX_, (float)ly - touchStartY_) > kTapSlop)
+        touchMoved_ = true;
+    if (touchInWorld_ && touchMoved_) {
+        // One-finger drag over the map pans the camera (like right-drag).
+        in_.mouseDown = false;       // it's a pan, not a UI press
+        view_.cam.tx -= dx / view_.cam.zoom;
+        view_.cam.ty -= dy / view_.cam.zoom;
+        view_.cam.x = view_.cam.tx; view_.cam.y = view_.cam.ty;  // immediate
+    }
+    // Otherwise it's a UI drag (e.g. a slider): mouseDown stays held and the
+    // mirrored mouseX/mouseY let the widget track the finger.
+}
+
+void Game::onFingerUp(SDL_FingerID id, float nx, float ny) {
+    int lx, ly; fingerToLogical(nx, ny, lx, ly);
+    if (pinching_) {
+        // Only the two pinch fingers affect the gesture; a stray 3rd finger
+        // lifting just decrements the count and is otherwise ignored.
+        if (id == f0Id_ || id == f1Id_) {
+            // Keep the finger that's still down as the primary, but never let it
+            // become a tap or a pan after a pinch.
+            if (id == f0Id_) { f0Id_ = f1Id_; f0x_ = f1x_; f0y_ = f1y_; }
+            // (if f1 lifted, f0 already holds the remaining finger's state)
+            touchMoved_ = true;
+            touchInWorld_ = false;
+            pinching_ = false;
+            in_.mouseDown = false;
+        }
+        touchCount_ = std::max(0, touchCount_ - 1);
+        return;
+    }
+    if (id == f0Id_) {
+        in_.mouseX = lx; in_.mouseY = ly;
+        if (!touchMoved_) {
+            // A clean tap: let the UI fire this frame, then handle the world.
+            in_.mouseReleased = true;
+            in_.mouseDown = false;
+            if (touchInWorld_) worldClickAt(lx, ly, 26.0f);  // finger-sized pick
+        } else {
+            in_.mouseDown = false;
+        }
+    }
+    touchCount_ = std::max(0, touchCount_ - 1);
+    if (touchCount_ == 0) in_.mouseDown = false;
+}
+
+// Shared primary-click handler: select an agent or deploy the active tool when
+// the click falls inside the world view. Used by both mouse and touch taps.
+void Game::worldClickAt(int sx, int sy, float pickPx) {
+    bool inWorld = (state_ == GState::Playing) &&
+                   sx < view_.viewX + view_.viewW && sy > view_.viewY;
+    if (!inWorld) return;
+    if (tool_ != Tool::None) {
+        deployAt(sx, sy);
+    } else {
+        float wx, wy; view_.screenToWorld(sx, sy, wx, wy);
+        int id = world_.pickAgentNear(wx, wy, pickPx / view_.cam.zoom);
+        selectedId_ = id;
+        if (id >= 0) audio_.select();
     }
 }
 
@@ -1489,14 +1696,14 @@ void Game::renderSettingsScreen() {
     SDL_Rect bApply{ x, y, w / 2 - 6, 36 };
     SDL_Rect bBack { x + w / 2 + 6, y, w / 2 - 6, 36 };
     if (ui::button(ren_, bApply, "REBUILD WORLD", in_, {120, 200, 140, 255}, 1)) {
-        audio_.click(); settings().saveToFile("cristiverse.cfg");
+        audio_.click(); settings().saveToFile(configPath());
         world_.regenerate();
         view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.55f);
         toast("Settings saved. World rebuilt.");
     }
     if (ui::button(ren_, bBack, "SAVE & GO BACK", in_, ui::accent(), 2)) {
         audio_.click();
-        settings().saveToFile("cristiverse.cfg");
+        settings().saveToFile(configPath());
         state_ = prevState_;
         toast("Settings saved.");
     }

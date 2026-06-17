@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pixel-art city skyline, kept inside the central safe zone of the 108x108
+     adaptive-icon canvas so launcher masks never clip the buildings. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Moon -->
+    <path android:fillColor="#F7E27A"
+        android:pathData="M80,22 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0 Z" />
+
+    <!-- Grass baseline the buildings sit on -->
+    <path android:fillColor="#2E7D46" android:pathData="M22,84 H86 V89 H22 Z" />
+
+    <!-- Buildings (green / blue / orange to match the in-game palette) -->
+    <path android:fillColor="#4EA85F" android:pathData="M26,54 H44 V84 H26 Z" />
+    <path android:fillColor="#5C84D6" android:pathData="M45,40 H63 V84 H45 Z" />
+    <path android:fillColor="#C9853F" android:pathData="M64,58 H82 V84 H64 Z" />
+
+    <!-- Lit windows -->
+    <path android:fillColor="#F7E27A" android:pathData="M29,58 h4 v5 h-4 Z M37,58 h4 v5 h-4 Z M29,66 h4 v5 h-4 Z M37,66 h4 v5 h-4 Z M29,74 h4 v5 h-4 Z M37,74 h4 v5 h-4 Z M48,46 h4 v5 h-4 Z M56,46 h4 v5 h-4 Z M48,54 h4 v5 h-4 Z M56,54 h4 v5 h-4 Z M48,62 h4 v5 h-4 Z M56,62 h4 v5 h-4 Z M48,70 h4 v5 h-4 Z M56,70 h4 v5 h-4 Z M67,62 h4 v5 h-4 Z M75,62 h4 v5 h-4 Z M67,70 h4 v5 h-4 Z M75,70 h4 v5 h-4 Z" />
+</vector>

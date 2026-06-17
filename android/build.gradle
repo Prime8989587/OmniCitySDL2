@@ -1,0 +1,5 @@
+// Root Gradle project for the CristiVerse Android port.
+// The Android Gradle Plugin version is declared here and applied in app/.
+plugins {
+    id 'com.android.application' version '8.1.4' apply false
+}

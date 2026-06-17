@@ -1,0 +1,57 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Absolute path to the SDL2 source tree fetched by android/fetch-sdl.sh.
+def sdlSrcDir = file("${projectDir}/../SDL").absolutePath
+
+android {
+    namespace 'com.cristiverse.game'
+    compileSdk 34
+    ndkVersion '26.1.10909125'
+
+    defaultConfig {
+        applicationId 'com.cristiverse.game'
+        minSdk 26          // Android 8.0 — adaptive vector icon, no PNG mipmaps needed
+        targetSdk 34
+        versionCode 1
+        versionName '2.0'
+
+        externalNativeBuild {
+            cmake {
+                // Shared C++ STL is required by SDL2 on Android.
+                arguments '-DANDROID_STL=c++_shared',
+                          "-DSDL_SRC_DIR=${sdlSrcDir}"
+            }
+        }
+
+        ndk {
+            // arm64/armv7 cover virtually all phones; x86_64 is for the emulator.
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+    }
+
+    // Build the native game (and SDL2) from the project's root CMakeLists.txt.
+    externalNativeBuild {
+        cmake {
+            path '../../CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                          'proguard-rules.pro'
+        }
+        debug {
+            // debuggable native + java; the default
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

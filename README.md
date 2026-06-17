@@ -49,6 +49,10 @@ game ships as a single small executable plus `SDL2.dll`.
   win, lose) with a master volume. Fails gracefully on machines with no audio.
 - **Config file** — `cristiverse.cfg` is read at launch and saved on exit; tune
   resolution, agent count, and quality without recompiling.
+- **Runs on Android** — the same C++ core builds into a touch-controlled,
+  landscape phone game with an adaptive launcher icon. Tap to select/deploy,
+  drag to pan, pinch to zoom, tuned for a steady 60 fps on low-end devices.
+  See **[ANDROID.md](ANDROID.md)**.
 
 ---
 
@@ -90,6 +94,16 @@ population respawns (`N`).
 | `R` | Generate a brand-new city |
 | `Esc` | Back one step (Playing → Paused → Menu → quit) |
 
+### Touch controls (Android)
+
+| Gesture | Action |
+|---------|--------|
+| Tap | Select an agent, deploy the active tool, or press a UI button |
+| One-finger drag (on the map) | Pan the camera |
+| Two-finger pinch | Zoom in/out |
+| Drag a slider / tap a button | Works exactly like the mouse |
+| Hardware/gesture **Back** | Back one step (Playing → Paused → Menu) |
+
 ---
 
 ## ⬇️ Downloads (prebuilt)
@@ -104,6 +118,10 @@ Actions:
 
 On Windows, unzip and run `CristiVerse.exe` (keep `SDL2.dll` next to it).
 On Linux, extract and run `./run.sh`.
+
+An **Android** debug `.apk` is built by the *Android* workflow — grab it from the
+**Actions** tab (or a tagged release) and `adb install` it, or sideload it onto a
+phone. Build it yourself with **[ANDROID.md](ANDROID.md)**.
 
 ---
 
@@ -151,6 +169,18 @@ cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
+### Android
+
+```bash
+android/fetch-sdl.sh          # download SDL2 source + its Java glue
+# Easiest: open the android/ folder in Android Studio and press Run.
+# CLI: generate the wrapper once (needs a system Gradle >= 8), then build:
+cd android && gradle wrapper --gradle-version 8.2 && ./gradlew assembleDebug
+```
+
+Full instructions, prerequisites, and troubleshooting are in
+**[ANDROID.md](ANDROID.md)**.
+
 ---
 
 ## ⚙️ Configuration
@@ -175,8 +205,9 @@ src/
   Audio.{h,cpp}    Procedural SFX engine
   Game.{h,cpp}     State machine, input, world + UI rendering
   main.cpp         Entry point (+ headless --shot screenshot mode)
-CMakeLists.txt     Cross-platform build
-.github/workflows/ CI that builds + packages Windows & Linux
+CMakeLists.txt     Cross-platform build (desktop + Android)
+android/           Android project (Gradle + adaptive icon + SDL fetch script)
+.github/workflows/ CI that builds Windows, Linux & the Android APK
 packaging/         Example config used in release zips
 scripts/           Local build & package helpers
 ```

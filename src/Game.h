@@ -50,6 +50,21 @@ private:
     bool  dragging_ = false;
     int   lastMx_ = 0, lastMy_ = 0;
 
+    // ---- Touch / mobile input (Android + touch laptops) ----
+    // All finger coordinates are stored in *logical* (render) pixels, matching
+    // the coordinate space the UI and world are drawn in.
+    bool  logicalActive_ = false;        // SDL logical render size in use (mobile)
+    int   winPxW_ = 0, winPxH_ = 0;      // physical drawable size, for touch mapping
+    int   touchCount_ = 0;               // fingers currently down
+    SDL_FingerID f0Id_ = 0, f1Id_ = 0;   // tracked primary/secondary finger ids
+    float f0x_ = 0, f0y_ = 0;            // primary finger position (logical px)
+    float f1x_ = 0, f1y_ = 0;            // secondary finger position (logical px)
+    float touchStartX_ = 0, touchStartY_ = 0;  // where the primary touch began
+    bool  touchMoved_ = false;           // primary finger passed the tap threshold
+    bool  touchInWorld_ = false;         // primary touch began over the world view
+    bool  pinching_ = false;             // two-finger pinch-zoom in progress
+    float pinchLastDist_ = 0.0f;         // last finger spacing (for zoom ratio)
+
     // Mayor gameplay loop.
     GameMode mode_ = GameMode::Survival;
     float budget_ = 200.0f;
@@ -82,6 +97,15 @@ private:
     void handleEvents();
     void update(float dt);
     void render();
+
+    // ---- touch / mobile ----
+    void setupMobile();                                 // hints, logical size, defaults
+    void fingerToLogical(float nx, float ny, int& lx, int& ly) const;
+    void onFingerDown(SDL_FingerID id, float nx, float ny);
+    void onFingerMotion(SDL_FingerID id, float nx, float ny);
+    void onFingerUp(SDL_FingerID id, float nx, float ny);
+    // Shared primary-click handler for mouse + touch taps in the world view.
+    void worldClickAt(int sx, int sy, float pickPx);
 
     // ---- world rendering ----
     void layoutView();
