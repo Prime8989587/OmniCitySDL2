@@ -61,9 +61,18 @@ void World::regenerate() {
     floats.clear();
     log.clear();
     generateBuildings();
+    generateTrees();
     generateAgents();
     recomputeStats();
     addLog("World generated.", {180, 220, 255, 255});
+}
+
+void World::regenerateAgentsOnly() {
+    particles.clear();
+    floats.clear();
+    generateAgents();
+    recomputeStats();
+    addLog("Population respawned.", {180, 220, 255, 255});
 }
 
 void World::generateBuildings() {
@@ -86,6 +95,46 @@ void World::generateBuildings() {
     }
 }
 
+void World::generateTrees() {
+    const auto& s = settings();
+    trees.clear();
+    int n = std::max(0, s.numTrees);
+    trees.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        Tree t;
+        // A few attempts to avoid landing inside a solid building.
+        bool placed = false;
+        for (int attempt = 0; attempt < 6 && !placed; ++attempt) {
+            float x = frand(60.0f, s.worldW - 60.0f);
+            float y = frand(60.0f, s.worldH - 60.0f);
+            bool blocked = false;
+            for (const auto& b : buildings) {
+                if (b.type == BType::Park) continue; // trees welcome in parks
+                if (x >= b.pos.x - 6 && x <= b.pos.x + b.w + 6 &&
+                    y >= b.pos.y - 6 && y <= b.pos.y + b.h + 6) { blocked = true; break; }
+            }
+            if (!blocked) { t.pos = {x, y}; placed = true; }
+        }
+        if (!placed) continue;
+        t.type   = (TreeType)irand(0, (int)TreeType::COUNT - 1);
+        t.height = frand(24.0f, 46.0f);
+        t.seed   = (unsigned)irand(1, 1 << 30);
+        trees.push_back(t);
+    }
+}
+
+int World::nearestHome(float wx, float wy) const {
+    int best = -1; float bestD2 = 1e18f;
+    for (int i = 0; i < (int)buildings.size(); ++i) {
+        const Building& b = buildings[i];
+        if (b.type != BType::Residential && b.type != BType::Office) continue;
+        float cx = b.pos.x + b.w * 0.5f, cy = b.pos.y + b.h * 0.5f;
+        float d2 = dist2(wx, wy, cx, cy);
+        if (d2 < bestD2) { bestD2 = d2; best = i; }
+    }
+    return best;
+}
+
 void World::generateAgents() {
     const auto& s = settings();
     agents.clear();
@@ -106,6 +155,7 @@ void World::generateAgents() {
         a.stress = frand(0.05f, 0.35f);
         a.money  = frand(40.0f, 160.0f);
         a.animPhase = frand(0.0f, 6.28f);
+        if (r == Role::Civil) a.home = nearestHome(a.pos.x, a.pos.y);
         agents.push_back(a);
     };
 
@@ -119,8 +169,11 @@ void World::generateAgents() {
 bool World::insideBuilding(float x, float y, BType* outType) const {
     for (const auto& b : buildings) {
         if (b.type == BType::Park) continue; // parks are walkable
+        // Only the bottom fraction of a building is solid; the top is walkable
+        // "behind" space so agents can pass behind tall structures.
+        float solidTop = b.pos.y + b.h * (1.0f - kBuildingSolidFrac);
         if (x >= b.pos.x && x <= b.pos.x + b.w &&
-            y >= b.pos.y && y <= b.pos.y + b.h) {
+            y >= solidTop && y <= b.pos.y + b.h) {
             if (outType) *outType = b.type;
             return true;
         }
@@ -160,7 +213,7 @@ int World::pickAgentNear(float wx, float wy, float worldRadius) const {
     int best = -1;
     float bestD2 = worldRadius * worldRadius;
     for (const auto& a : agents) {
-        if (!a.alive) continue;
+        if (!a.alive || a.sleeping) continue;
         float d2 = dist2(a.pos.x, a.pos.y, wx, wy);
         if (d2 < bestD2) { bestD2 = d2; best = a.id; }
     }
@@ -193,6 +246,9 @@ void World::step(float dt) {
 
     grid.build(agents, s.worldW, s.worldH, 90.0f);
 
+    const float hour  = hourOfDay();
+    const bool  night = s.dayNight && (hour >= 22.0f || hour < 6.0f);
+
     const float MAXSPEED = 46.0f;
     const float FEAR_R   = 90.0f;
     const float HUNT_R   = 150.0f;
@@ -200,6 +256,19 @@ void World::step(float dt) {
 
     for (auto& a : agents) {
         if (!a.alive) continue;
+
+        // Sleeping civilians stay hidden inside their home until morning.
+        if (a.sleeping) {
+            if (night && a.role == Role::Civil) continue; // keep sleeping
+            a.sleeping = false;                            // wake at dawn
+            if (a.home >= 0 && a.home < (int)buildings.size()) {
+                const Building& hb = buildings[a.home];
+                a.pos = { hb.pos.x + hb.w * 0.5f, hb.pos.y + hb.h + 14.0f };
+                a.pos.x = clampf(a.pos.x, 4.0f, s.worldW - 4.0f);
+                a.pos.y = clampf(a.pos.y, 4.0f, s.worldH - 4.0f);
+                a.vel = { frand(-10.0f, 10.0f), frand(8.0f, 22.0f) };
+            }
+        }
 
         // Decay timers / stress baseline.
         a.actFlash = std::max(0.0f, a.actFlash - dt * 2.0f);
@@ -213,11 +282,19 @@ void World::step(float dt) {
 
         switch (a.role) {
         case Role::Civil: {
+            // At night, head home to sleep instead of wandering.
+            if (night && a.home >= 0 && a.home < (int)buildings.size()) {
+                const Building& hb = buildings[a.home];
+                Vec2 c{ hb.pos.x + hb.w * 0.5f, hb.pos.y + hb.h * 0.5f };
+                steer += (c - a.pos).norm() * 95.0f;
+                nextAct = Act::Walk;
+                break;
+            }
             // Flee from nearby threats.
             int threat = -1; float bd2 = FEAR_R * FEAR_R;
             grid.query(a.pos.x, a.pos.y, FEAR_R, [&](int j) {
                 const Agent& o = agents[j];
-                if (!o.alive) return;
+                if (!o.alive || o.sleeping) return;
                 if (o.role == Role::Criminal || o.role == Role::Gang) {
                     float d2 = dist2(a.pos.x, a.pos.y, o.pos.x, o.pos.y);
                     if (d2 < bd2) { bd2 = d2; threat = j; }
@@ -230,7 +307,7 @@ void World::step(float dt) {
                 nextAct = Act::Flee;
             }
             // High stress can tip a civilian into crime.
-            if (a.stress > 0.9f && chance01() < dt * 0.02f) {
+            if (a.stress > 0.9f && chance01() < dt * 0.01f) {
                 a.role = Role::Criminal; a.stress = 0.5f;
                 addFloat(a.pos, "turned!", {232,64,52,255});
             }
@@ -242,7 +319,7 @@ void World::step(float dt) {
             int victim = -1; float vd2 = HUNT_R * HUNT_R;
             grid.query(a.pos.x, a.pos.y, HUNT_R, [&](int j) {
                 const Agent& o = agents[j];
-                if (!o.alive) return;
+                if (!o.alive || o.sleeping) return;
                 float d2 = dist2(a.pos.x, a.pos.y, o.pos.x, o.pos.y);
                 if (o.role == Role::Police && d2 < copd2) { copd2 = d2; cop = j; }
                 if (o.role == Role::Civil  && d2 < vd2)   { vd2 = d2; victim = j; }
@@ -269,7 +346,7 @@ void World::step(float dt) {
             int target = -1; float td2 = (HUNT_R*1.2f)*(HUNT_R*1.2f);
             grid.query(a.pos.x, a.pos.y, HUNT_R * 1.2f, [&](int j) {
                 const Agent& o = agents[j];
-                if (!o.alive) return;
+                if (!o.alive || o.sleeping) return;
                 if (o.role == Role::Criminal || o.role == Role::Gang) {
                     float d2 = dist2(a.pos.x, a.pos.y, o.pos.x, o.pos.y);
                     if (d2 < td2) { td2 = d2; target = j; }
@@ -286,6 +363,8 @@ void World::step(float dt) {
                     stats.arrests++;
                     spawnBurst(t.pos, {64,144,255,255}, 8, 80.0f);
                     addFloat(t.pos, wasGang ? "busted!" : "arrested", {64,144,255,255});
+                    addFloat({t.pos.x, t.pos.y - 14.0f},
+                             "+$" + std::to_string(econ::kBountyArrest), {255,215,90,255});
                 }
             }
             break;
@@ -296,7 +375,7 @@ void World::step(float dt) {
             int victim = -1; float vd2 = HUNT_R * HUNT_R;
             grid.query(a.pos.x, a.pos.y, HUNT_R, [&](int j) {
                 const Agent& o = agents[j];
-                if (!o.alive) return;
+                if (!o.alive || o.sleeping) return;
                 float d2 = dist2(a.pos.x, a.pos.y, o.pos.x, o.pos.y);
                 if (o.role == Role::Police && d2 < copd2) { copd2 = d2; cop = j; }
                 if (o.role == Role::Civil  && d2 < vd2)   { vd2 = d2; victim = j; }
@@ -328,7 +407,7 @@ void World::step(float dt) {
             int patient = -1; float pd2 = (HUNT_R*1.3f)*(HUNT_R*1.3f);
             grid.query(a.pos.x, a.pos.y, HUNT_R * 1.3f, [&](int j) {
                 const Agent& o = agents[j];
-                if (!o.alive || j == a.id) return;
+                if (!o.alive || o.sleeping || j == a.id) return;
                 if (o.stress > 0.55f || o.health < 0.7f) {
                     float d2 = dist2(a.pos.x, a.pos.y, o.pos.x, o.pos.y);
                     if (d2 < pd2) { pd2 = d2; patient = j; }
@@ -344,7 +423,8 @@ void World::step(float dt) {
                     if (chance01() < dt * 1.0f) {
                         stats.heals++;
                         spawnBurst(p.pos, {66,220,120,255}, 4, 50.0f);
-                        addFloat(p.pos, "+heal", {66,220,120,255});
+                        addFloat(p.pos, "+$" + std::to_string(econ::kBountyHeal) + " heal",
+                                 {66,220,120,255});
                     }
                 }
             }
@@ -389,6 +469,19 @@ void World::step(float dt) {
                 a.pos.y >= b.pos.y && a.pos.y <= b.pos.y + b.h) {
                 a.stress = clampf(a.stress - dt * 0.25f, 0, 1);
                 break;
+            }
+        }
+
+        // Reached home at night => slip inside and fall asleep (hidden).
+        if (a.role == Role::Civil && night && a.home >= 0 && a.home < (int)buildings.size()) {
+            const Building& hb = buildings[a.home];
+            float nx = clampf(a.pos.x, hb.pos.x, hb.pos.x + hb.w);
+            float ny = clampf(a.pos.y, hb.pos.y, hb.pos.y + hb.h);
+            if (dist2(a.pos.x, a.pos.y, nx, ny) < 20.0f * 20.0f) {
+                a.sleeping = true;
+                a.pos = { hb.pos.x + hb.w * 0.5f, hb.pos.y + hb.h * 0.5f };
+                a.vel = { 0, 0 };
+                a.act = Act::Idle;
             }
         }
 

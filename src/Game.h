@@ -11,8 +11,13 @@ namespace cv {
 
 enum class GState { Menu, Playing, Paused, Settings, GameOver, Help };
 
-// Deployable tool the "mayor" can place by clicking the world.
-enum class Tool { None, Police, Healer };
+// Survival = the timed mayor challenge; Sandbox = free creative play.
+enum class GameMode { Survival, Sandbox };
+
+// Deployable / spawnable tool the player can place by clicking the world.
+// Police/Healer are the survival deploys; the Spawn* tools are sandbox-only.
+enum class Tool { None, Police, Healer,
+                  SpawnCivil, SpawnCriminal, SpawnPolice, SpawnHealer, SpawnGang };
 
 class Game {
 public:
@@ -46,13 +51,23 @@ private:
     int   lastMx_ = 0, lastMy_ = 0;
 
     // Mayor gameplay loop.
-    float budget_ = 220.0f;
+    GameMode mode_ = GameMode::Survival;
+    float budget_ = 200.0f;
     float safety_ = 100.0f;            // 0 => lose
     float gameTimer_ = 0.0f;           // seconds survived
     float goalTime_  = 180.0f;         // survive this long => win
     bool  won_ = false;
     int   finalScore_ = 0;
     Tool  tool_ = Tool::None;
+
+    // Economy bookkeeping (bounties awarded from stat deltas).
+    long  prevArrests_ = 0;
+    long  prevHeals_   = 0;
+    float incomeTimer_ = 0.0f;         // passive city-tax accumulator
+    bool  showGrid_    = false;        // sandbox placement grid overlay
+
+    // Per-frame scratch: which buildings are made see-through by agents behind.
+    std::vector<unsigned char> buildingOccluded_;
 
     // Presentation.
     float fade_ = 1.0f;                // screen fade-in (1->0)
@@ -72,7 +87,9 @@ private:
     void layoutView();
     void renderWorld();
     void renderGround();
-    void renderBuilding(const Building& b);
+    void renderGrid();                              // sandbox placement overlay
+    void renderBuilding(const Building& b, Uint8 alpha);
+    void renderTree(const Tree& t);
     void renderAgent(const Agent& a);
     void renderParticles();
     void renderFloats();
@@ -97,12 +114,15 @@ private:
 
     // ---- helpers ----
     void startNewGame();
+    void startSandbox();
     void setSpeed(int idx);
     void deployAt(int sx, int sy);
     void toast(const std::string& m) { toastMsg_ = m; toast_ = 2.5f; }
     float dayBrightness() const;       // 0..1 based on world_.dayTime
     SDL_Color skyTop() const;
     SDL_Color skyBottom() const;
+    SDL_Color windowColor() const;     // lit-window tint for current time of day
+    int   liveScore() const;           // projected score from current stats
 };
 
 } // namespace cv

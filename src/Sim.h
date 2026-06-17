@@ -19,6 +19,19 @@ enum class BType : int {
 };
 const char* btypeName(BType t);
 
+enum class TreeType : int { Deciduous = 0, Pine, Willow, Dead, COUNT };
+
+// Shared gameplay economy constants (used by the sim for floating text and by
+// the game loop to award budget — keep the two in sync).
+namespace econ {
+    constexpr int kBountyArrest = 50;  // reward per criminal/gang arrested
+    constexpr int kBountyHeal   = 10;  // reward per heal milestone
+}
+
+// Fraction of a building's height (from the bottom) that is physically solid.
+// The upper part is walkable "behind" the building, enabling occlusion x-ray.
+constexpr float kBuildingSolidFrac = 0.60f;
+
 struct Agent {
     int   id = 0;
     Vec2  pos, vel;
@@ -34,6 +47,9 @@ struct Agent {
     float facing    = 1.0f; // +1 right, -1 left
     float actFlash  = 0.0f; // >0 => currently performing a visible action
     int   targetId  = -1;
+
+    bool  sleeping  = false; // civilians sleep inside their home at night
+    int   home      = -1;    // index into buildings (where this agent sleeps)
 };
 
 struct Building {
@@ -52,6 +68,13 @@ struct Particle {
     float size = 2;
     SDL_Color color{255,255,255,255};
     bool  gravity = false;
+};
+
+struct Tree {
+    Vec2     pos;            // trunk base in world space
+    TreeType type = TreeType::Deciduous;
+    float    height = 30.0f; // world units
+    unsigned seed = 0;       // per-tree shape variation
 };
 
 struct FloatText {
@@ -84,6 +107,7 @@ public:
     // Visit candidate agent indices within `radius` of (x,y).
     template <class Fn>
     void query(float x, float y, float radius, Fn&& fn) const {
+        if (cells_.empty()) return; // not built yet
         int c0 = clampi((int)((x - radius) / cell_), 0, cols_ - 1);
         int c1 = clampi((int)((x + radius) / cell_), 0, cols_ - 1);
         int r0 = clampi((int)((y - radius) / cell_), 0, rows_ - 1);
@@ -103,6 +127,7 @@ class World {
 public:
     std::vector<Building>  buildings;
     std::vector<Agent>     agents;
+    std::vector<Tree>      trees;
     std::vector<Particle>  particles;
     std::vector<FloatText> floats;
     std::vector<LogEntry>  log;
@@ -110,10 +135,14 @@ public:
     SpatialGrid grid;
 
     int   tick = 0;
-    float dayTime = 0.30f;   // 0..1 cycle; 0.25=morning, 0.5=noon, 0.75=dusk
+    float dayTime = 0.30f;   // 0..1 cycle; 0.0=midnight, 0.5=noon
 
-    void regenerate();        // rebuild buildings + agents from settings
-    void step(float dt);      // advance one simulation step by dt seconds
+    // Hour of day in [0,24). dayTime 0.5 == 12:00 (brightest / noon).
+    float hourOfDay() const { return dayTime * 24.0f; }
+
+    void regenerate();          // rebuild buildings + trees + agents
+    void regenerateAgentsOnly(); // keep buildings/trees, respawn agents
+    void step(float dt);        // advance one simulation step by dt seconds
     void recomputeStats();
 
     // Spawn helpers (used by sim + UI feedback).
@@ -122,9 +151,11 @@ public:
     void addLog(const std::string& t, SDL_Color c);
 
     int  pickAgentNear(float wx, float wy, float worldRadius) const;
+    int  nearestHome(float wx, float wy) const; // nearest residential/office
 
 private:
     void generateBuildings();
+    void generateTrees();
     void generateAgents();
     bool insideBuilding(float x, float y, BType* outType = nullptr) const;
 };

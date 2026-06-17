@@ -46,6 +46,7 @@ void Settings::loadFromFile(const std::string& path) {
             else if (key == "worldH")       worldH       = std::stof(val);
             else if (key == "numAgents")    numAgents    = std::stoi(val);
             else if (key == "numBuildings") numBuildings = std::stoi(val);
+            else if (key == "numTrees")     numTrees     = std::stoi(val);
             else if (key == "animations")   animations   = toBool(val);
             else if (key == "shadows")      shadows      = toBool(val);
             else if (key == "dayNight")     dayNight     = toBool(val);
@@ -70,6 +71,7 @@ void Settings::saveToFile(const std::string& path) const {
     out << "worldH="       << worldH       << "\n";
     out << "numAgents="    << numAgents    << "\n";
     out << "numBuildings=" << numBuildings << "\n";
+    out << "numTrees="     << numTrees     << "\n";
     out << "animations="   << (animations ? 1 : 0) << "\n";
     out << "shadows="      << (shadows ? 1 : 0)    << "\n";
     out << "dayNight="     << (dayNight ? 1 : 0)   << "\n";

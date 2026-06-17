@@ -35,7 +35,26 @@ To add **a new role**:
 - Types live in `enum class BType` (`src/Sim.h`) with names in `btypeName()`.
 - Generation/placement: `World::generateBuildings()` (`src/Sim.cpp`).
 - Appearance: `Game::renderBuilding()` (`src/Game.cpp`) — colors per type, roof,
-  window grid, chimney, hospital cross, and police badge are all drawn here.
+  window grid, chimney, hospital cross, and police badge are all drawn here. The
+  window grid is computed in **world space** so zoom never changes the pattern.
+- `kBuildingSolidFrac` (`src/Sim.h`) sets how much of a building (from the
+  bottom) is solid; the top is walkable "behind" space. When an agent stands in
+  that rear zone, the building is drawn semi-transparent (occlusion x-ray) — see
+  the depth-sorted painter pass in `Game::renderWorld()`.
+
+## Trees — `src/Sim.cpp` & `src/Game.cpp`
+
+- `enum class TreeType` (`src/Sim.h`): Deciduous, Pine, Willow, Dead.
+- Placement: `World::generateTrees()` (count from `numTrees` in the config).
+- Appearance: `Game::renderTree()` (`src/Game.cpp`).
+
+## Day/night & sleep — `src/Sim.cpp` & `src/Game.cpp`
+
+- `World::hourOfDay()` returns 0–24 (noon == brightest). Civilians head home and
+  sleep between 22:00 and 06:00 (the `night` window in `World::step()`); change
+  those thresholds to retime the city.
+- `Game::windowColor()` maps the hour to the lit-window tint (night blue → midday
+  white-yellow → dusk orange).
 
 ## Colors & theme — `src/UI.h`
 
@@ -57,7 +76,18 @@ just sequences of blips — add your own and call them from `src/Game.cpp`.
 ## Gameplay rules — `src/Game.cpp`
 
 The mayor loop is in `Game::update()`:
-- `budget_` regen rate, deploy costs (`Game::deployAt`).
+- Bounties: `econ::kBountyArrest` / `econ::kBountyHeal` (`src/Sim.h`) pay out on
+  each arrest/heal; the sim spawns the matching `+$` float, and `update()` awards
+  the budget from stat deltas. Steady trickle, periodic tax, and the 500 cap also
+  live here.
+- Deploy costs are in `Game::deployAt` (and are free in Sandbox).
 - `safety_` dynamics (the `rate` formula) — controls difficulty.
 - `goalTime_` (in `Game.h`) — how long you must survive.
-- Scoring is computed where the win/lose states are set.
+- Scoring: `Game::liveScore()` plus leftover safety on a win.
+
+## Modes & sandbox — `src/Game.cpp`
+
+`GameMode` (`src/Game.h`) switches between Survival and Sandbox. `startSandbox()`
+sets up free play; the `Tool::Spawn*` values drive the sandbox spawners (keys
+`3`–`7`), and `renderInfoPanel()` shows the live stat-editing sliders when a mode
+is Sandbox.

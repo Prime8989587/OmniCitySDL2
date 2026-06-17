@@ -127,6 +127,15 @@ void circleOutline(SDL_Renderer* r, int cx, int cy, int radius, SDL_Color c) {
     }
 }
 
+void fillTriangleUp(SDL_Renderer* r, int cx, int apexY, int halfW, int height, SDL_Color c) {
+    if (height <= 0) return;
+    SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+    for (int dy = 0; dy <= height; ++dy) {
+        int hw = (int)std::lround((double)halfW * dy / height);
+        SDL_RenderDrawLine(r, cx - hw, apexY + dy, cx + hw, apexY + dy);
+    }
+}
+
 void vGradient(SDL_Renderer* r, const SDL_Rect& rc, SDL_Color top, SDL_Color bottom) {
     if (rc.h <= 0) return;
     for (int i = 0; i < rc.h; ++i) {

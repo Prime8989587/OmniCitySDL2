@@ -19,21 +19,31 @@ game ships as a single small executable plus `SDL2.dll`.
 
 - **Modular C++17 codebase** — config, math, font, rendering, simulation, UI,
   audio, and game-state are cleanly separated.
-- **Procedural graphics** — buildings with roofs, lit windows, shadows, parks
-  with trees, factory chimneys with rising smoke, a hospital and police station
-  with markers, a road grid, and a day/night cycle.
+- **Procedural graphics** — buildings with roofs, time-of-day lit windows,
+  shadows, four procedural tree types (deciduous, pine, willow, dead), factory
+  chimneys with rising smoke, hospital/police markers, a road grid, and a
+  day/night cycle.
+- **Depth-sorted world** — buildings, trees, and agents are painted back-to-front
+  by base Y, and a building turns semi-transparent (x-ray) when an agent walks
+  behind it. Zoom no longer disturbs the window pattern.
+- **Day/night life** — a 24-hour clock drives window colour (dark blue at night,
+  white-yellow at midday, orange at dusk); civilians walk home and sleep indoors
+  between 22:00 and 06:00, then spill back out at dawn.
 - **Animations** — agent walk-bob and facing, action flash rings
   (rob / arrest / heal / fight), floating event text, drifting particles,
   smooth camera pan/zoom, and a fade-in.
-- **Agent AI with 5 roles** — Civilians flee threats and crack under stress;
-  Criminals hunt and rob; Police chase and arrest; Gangs fight police; Healers
-  calm and heal. A spatial grid keeps neighbor queries fast for thousands of agents.
+- **Agent AI with 5 roles** — Civilians flee threats, crack under stress, and
+  sleep at night; Criminals hunt and rob; Police chase and arrest; Gangs fight
+  police; Healers calm and heal. A spatial grid keeps neighbor queries fast.
 - **Built-in UI toolkit** — buttons, toggles, sliders, panels, a top HUD with
-  live role counts, a selected-agent info panel, a minimap with a live camera
-  viewport box, and a scrolling event log.
+  live role counts and a clock, a selected-agent info/edit panel, a minimap with
+  a live camera viewport box, and a scrolling event log.
+- **Two modes** — a timed **Survival** challenge (earn bounties for arrests and
+  heals, then beat the clock for a high score) and a **Sandbox** with unlimited
+  budget, free entity spawners, and live agent-stat editing.
 - **Game loop** — Menu → Playing → Paused → Game Over, settings + help screens,
-  0.5×/1×/2×/4× speed control, a safety meter, a budget economy, deployable
-  units, and win/lose conditions with scoring.
+  0.5×/1×/2×/4× speed control, a safety meter, a snowballing budget economy,
+  deployable units, and win/lose conditions with scoring.
 - **Procedural audio** — synthesized SFX (click, select, crime, arrest, deploy,
   win, lose) with a master volume. Fails gracefully on machines with no audio.
 - **Config file** — `cristiverse.cfg` is read at launch and saved on exit; tune
@@ -48,10 +58,19 @@ above zero until the **Survive** timer runs out.
 
 - Crime and high stress drain City Safety. Police reduce crime (they arrest and
   rehabilitate criminals). Healers reduce stress.
-- Deploying units costs **Budget**, which regenerates over time. Spend wisely.
+- Deploying units costs **Budget** (Police 100, Healer 80). You start with 200
+  and the economy **snowballs**: every arrest pays **+$50**, every heal **+$10**,
+  plus steady city income and a periodic tax — so an active mayor can fund a
+  growing force. Budget caps at 500.
 - Survive the timer with safety above zero to **win**. Let it hit zero and the
-  city is **lost**. Your score rewards arrests, heals, time survived, and
-  remaining safety.
+  city is **lost**. Your score is `arrests×10 + heals×5 + time (+ leftover safety)`.
+
+### Sandbox mode
+
+Pick **Sandbox** from the menu for free creative play: unlimited budget, no timer
+or safety pressure, spawners for every role (keys `3`–`7`), live editing of a
+selected agent's stress / health / money, a placement grid (`G`), and one-key
+population respawns (`N`).
 
 ### Controls
 
@@ -59,15 +78,16 @@ above zero until the **Survive** timer runs out.
 |-------|--------|
 | `W A S D` / Arrow keys / right-drag | Pan the camera |
 | Mouse wheel | Zoom in/out |
-| Left click | Select an agent (see its stats) |
-| `1` | Toggle the **Police** deploy tool, then click the map to place |
-| `2` | Toggle the **Healer** deploy tool, then click the map to place |
-| `Tab` | Cancel the active deploy tool |
+| Left click | Select an agent (edit it in Sandbox) |
+| `1` / `2` | Toggle the **Police** / **Healer** deploy tool, then click the map |
+| `3` `4` `5` `6` `7` | *(Sandbox)* spawn Civilian / Criminal / Police / Healer / Gang |
+| `G` / `N` | *(Sandbox)* toggle placement grid / respawn population |
+| `Tab` | Cancel the active tool |
 | `[` / `]` | Slower / faster simulation speed |
 | `Space` | Pause / resume |
 | `H` | Help screen |
 | `R` | Generate a brand-new city |
-| `Esc` | Back / pause / quit |
+| `Esc` | Back one step (Playing → Paused → Menu → quit) |
 
 ---
 

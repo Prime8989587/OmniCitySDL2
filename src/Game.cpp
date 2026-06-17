@@ -188,8 +188,9 @@ void Game::handleEvents() {
         case SDL_KEYDOWN: {
             SDL_Keycode k = e.key.keysym.sym;
             if (k == SDLK_ESCAPE) {
+                // "Back" walks one step out: Playing -> Paused -> Menu -> quit.
                 if (state_ == GState::Playing)       state_ = GState::Paused;
-                else if (state_ == GState::Paused)   state_ = GState::Playing;
+                else if (state_ == GState::Paused)   { state_ = GState::Menu; fade_ = 0.6f; }
                 else if (state_ == GState::Settings ||
                          state_ == GState::Help)     state_ = prevState_;
                 else if (state_ == GState::GameOver) state_ = GState::Menu;
@@ -197,13 +198,22 @@ void Game::handleEvents() {
             }
             if (state_ == GState::Playing) {
                 if (k == SDLK_SPACE) state_ = GState::Paused;
-                if (k == SDLK_r)     { startNewGame(); }
+                if (k == SDLK_r)     { if (mode_ == GameMode::Sandbox) startSandbox(); else startNewGame(); }
                 if (k == SDLK_1)     { tool_ = (tool_ == Tool::Police) ? Tool::None : Tool::Police; }
                 if (k == SDLK_2)     { tool_ = (tool_ == Tool::Healer) ? Tool::None : Tool::Healer; }
                 if (k == SDLK_TAB)   { tool_ = Tool::None; }
                 if (k == SDLK_LEFTBRACKET)  setSpeed(speedIndex_ - 1);
                 if (k == SDLK_RIGHTBRACKET) setSpeed(speedIndex_ + 1);
                 if (k == SDLK_h)     { prevState_ = state_; state_ = GState::Help; }
+                if (mode_ == GameMode::Sandbox) {
+                    if (k == SDLK_3) tool_ = (tool_ == Tool::SpawnCivil)    ? Tool::None : Tool::SpawnCivil;
+                    if (k == SDLK_4) tool_ = (tool_ == Tool::SpawnCriminal) ? Tool::None : Tool::SpawnCriminal;
+                    if (k == SDLK_5) tool_ = (tool_ == Tool::SpawnPolice)   ? Tool::None : Tool::SpawnPolice;
+                    if (k == SDLK_6) tool_ = (tool_ == Tool::SpawnHealer)   ? Tool::None : Tool::SpawnHealer;
+                    if (k == SDLK_7) tool_ = (tool_ == Tool::SpawnGang)     ? Tool::None : Tool::SpawnGang;
+                    if (k == SDLK_g) { showGrid_ = !showGrid_; }
+                    if (k == SDLK_n) { world_.regenerateAgentsOnly(); selectedId_ = -1; toast("Population respawned"); }
+                }
             } else if (state_ == GState::Paused) {
                 if (k == SDLK_SPACE) state_ = GState::Playing;
             }
@@ -224,36 +234,81 @@ void Game::setSpeed(int idx) {
 
 void Game::startNewGame() {
     auto& s = settings();
+    mode_ = GameMode::Survival;
     world_.regenerate();
     view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.55f);
     selectedId_ = -1;
-    budget_ = 220.0f;
+    budget_ = 200.0f;
     safety_ = 100.0f;
     gameTimer_ = 0.0f;
     won_ = false;
     finalScore_ = 0;
     tool_ = Tool::None;
+    prevArrests_ = world_.stats.arrests;
+    prevHeals_   = world_.stats.heals;
+    incomeTimer_ = 0.0f;
+    showGrid_ = false;
     setSpeed(1);
     state_ = GState::Playing;
     fade_ = 0.7f;
     toast("New city online. Keep it safe!");
 }
 
+void Game::startSandbox() {
+    auto& s = settings();
+    mode_ = GameMode::Sandbox;
+    world_.regenerate();
+    view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.55f);
+    selectedId_ = -1;
+    budget_ = 0.0f;            // unused — sandbox is free
+    safety_ = 100.0f;
+    gameTimer_ = 0.0f;
+    won_ = false;
+    finalScore_ = 0;
+    tool_ = Tool::None;
+    prevArrests_ = world_.stats.arrests;
+    prevHeals_   = world_.stats.heals;
+    incomeTimer_ = 0.0f;
+    showGrid_ = false;
+    setSpeed(1);
+    state_ = GState::Playing;
+    fade_ = 0.7f;
+    toast("Sandbox: build your city freely.");
+}
+
 void Game::deployAt(int sx, int sy) {
-    float cost = (tool_ == Tool::Police) ? 100.0f : 80.0f;
-    if (budget_ < cost) { toast("Not enough budget!"); audio_.alarm(); return; }
+    Role  role; float cost;
+    switch (tool_) {
+        case Tool::Police:        role = Role::Police;   cost = 100.0f; break;
+        case Tool::Healer:        role = Role::Healer;   cost = 80.0f;  break;
+        case Tool::SpawnCivil:    role = Role::Civil;    cost = 0.0f;   break;
+        case Tool::SpawnCriminal: role = Role::Criminal; cost = 0.0f;   break;
+        case Tool::SpawnPolice:   role = Role::Police;   cost = 0.0f;   break;
+        case Tool::SpawnHealer:   role = Role::Healer;   cost = 0.0f;   break;
+        case Tool::SpawnGang:     role = Role::Gang;     cost = 0.0f;   break;
+        default: return;
+    }
+    if (mode_ == GameMode::Sandbox) cost = 0.0f;
+    if (mode_ == GameMode::Survival && budget_ < cost) {
+        toast("Not enough budget!"); audio_.alarm(); return;
+    }
     float wx, wy; view_.screenToWorld(sx, sy, wx, wy);
     Agent a;
     a.id = (int)world_.agents.size();
     a.pos = { wx, wy };
-    a.role = (tool_ == Tool::Police) ? Role::Police : Role::Healer;
+    a.role = role;
+    a.stress = (role == Role::Criminal || role == Role::Gang) ? frand(0.4f, 0.7f)
+                                                              : frand(0.1f, 0.3f);
+    a.money  = frand(40.0f, 160.0f);
     a.animPhase = frand(0.0f, 6.28f);
+    if (role == Role::Civil) a.home = world_.nearestHome(wx, wy);
     world_.agents.push_back(a);
     budget_ -= cost;
     audio_.deploy();
-    world_.spawnBurst({wx, wy}, roleColor(a.role), 12, 90.0f);
-    world_.addLog(std::string("Deployed ") + roleName(a.role) + ".", roleColor(a.role));
-    toast(std::string("Deployed ") + roleName(a.role));
+    world_.spawnBurst({wx, wy}, roleColor(role), 12, 90.0f);
+    const char* verb = (mode_ == GameMode::Sandbox) ? "Spawned " : "Deployed ";
+    world_.addLog(std::string(verb) + roleName(role) + ".", roleColor(role));
+    toast(std::string(verb) + roleName(role));
 }
 
 void Game::layoutView() {
@@ -318,29 +373,46 @@ void Game::update(float dt) {
             }
         }
 
-        // Budget & safety dynamics.
-        budget_ = std::min(620.0f, budget_ + 7.0f * dt);
-        int living = 0;
-        for (int i = 0; i < (int)Role::COUNT; ++i) living += world_.stats.count[i];
-        int crime = world_.stats.count[(int)Role::Criminal] + world_.stats.count[(int)Role::Gang];
-        float ratio = living > 0 ? (float)crime / living : 0.0f;
-        float rate = 9.0f - ratio * 70.0f - std::max(0.0f, world_.stats.avgStress - 0.4f) * 40.0f;
-        safety_ = clampf(safety_ + rate * dt, 0.0f, 100.0f);
-
         gameTimer_ += dt * simSpeed_;
 
-        // Win / lose.
-        if (safety_ <= 0.0f) {
-            won_ = false;
-            finalScore_ = (int)(world_.stats.arrests * 10 + world_.stats.heals * 5 + gameTimer_);
-            state_ = GState::GameOver;
-            audio_.lose();
-        } else if (gameTimer_ >= goalTime_) {
-            won_ = true;
-            finalScore_ = (int)(world_.stats.arrests * 10 + world_.stats.heals * 5 +
-                                gameTimer_ + safety_ * 3);
-            state_ = GState::GameOver;
-            audio_.win();
+        // Economy: bounties from arrests/heals + steady city income.
+        long aNow = world_.stats.arrests;
+        long hNow = world_.stats.heals;
+        if (mode_ == GameMode::Survival) {
+            budget_ += (float)(aNow - prevArrests_) * econ::kBountyArrest;
+            budget_ += (float)(hNow - prevHeals_)   * econ::kBountyHeal;
+            budget_ += 5.0f * dt;                      // small steady trickle
+            incomeTimer_ += dt * simSpeed_;
+            if (incomeTimer_ >= 30.0f) {               // periodic city tax
+                incomeTimer_ -= 30.0f;
+                budget_ += 20.0f;
+                toast("+$20 city tax");
+            }
+            budget_ = clampf(budget_, 0.0f, 500.0f);
+        }
+        prevArrests_ = aNow;
+        prevHeals_   = hNow;
+
+        // Safety + win/lose only matter in survival mode.
+        if (mode_ == GameMode::Survival) {
+            int living = 0;
+            for (int i = 0; i < (int)Role::COUNT; ++i) living += world_.stats.count[i];
+            int crime = world_.stats.count[(int)Role::Criminal] + world_.stats.count[(int)Role::Gang];
+            float ratio = living > 0 ? (float)crime / living : 0.0f;
+            float rate = 12.0f - ratio * 62.0f - std::max(0.0f, world_.stats.avgStress - 0.4f) * 34.0f;
+            safety_ = clampf(safety_ + rate * dt, 0.0f, 100.0f);
+
+            if (safety_ <= 0.0f) {
+                won_ = false;
+                finalScore_ = liveScore();
+                state_ = GState::GameOver;
+                audio_.lose();
+            } else if (gameTimer_ >= goalTime_) {
+                won_ = true;
+                finalScore_ = liveScore() + (int)(safety_ * 3);
+                state_ = GState::GameOver;
+                audio_.win();
+            }
         }
 
         // Building hover for tooltip.
@@ -371,6 +443,25 @@ SDL_Color Game::skyTop() const {
 SDL_Color Game::skyBottom() const {
     float b = dayBrightness();
     return scaleColor({14, 20, 26, 255}, b);
+}
+
+// Lit-window tint for the current hour: dark-blue at night, white-yellow at
+// midday, orange in the evening, blending smoothly across dawn/dusk.
+SDL_Color Game::windowColor() const {
+    if (!settings().dayNight) return {255, 224, 140, 255};
+    float h = world_.hourOfDay();
+    SDL_Color night = {64, 86, 140, 255};    // dark blue
+    SDL_Color day   = {255, 246, 205, 255};  // bright white-yellow
+    SDL_Color dusk  = {255, 170, 92, 255};   // orange-yellow
+    if (h >= 7.0f  && h < 17.0f) return day;
+    if (h >= 5.0f  && h < 7.0f)  return lerpColor(night, day, (h - 5.0f) / 2.0f);
+    if (h >= 17.0f && h < 18.0f) return lerpColor(day, dusk, h - 17.0f);
+    if (h >= 18.0f && h < 19.0f) return lerpColor(dusk, night, h - 18.0f);
+    return night; // 19:00 .. 05:00
+}
+
+int Game::liveScore() const {
+    return (int)(world_.stats.arrests * 10 + world_.stats.heals * 5 + gameTimer_);
 }
 
 // =====================================================================
@@ -429,8 +520,51 @@ void Game::renderWorld() {
     SDL_RenderSetClipRect(ren_, &clip);
 
     renderGround();
-    for (const auto& b : world_.buildings) renderBuilding(b);
-    for (const auto& a : world_.agents) renderAgent(a);
+    if (showGrid_ && mode_ == GameMode::Sandbox) renderGrid();
+
+    // Determine which buildings have an awake agent behind them => see-through.
+    buildingOccluded_.assign(world_.buildings.size(), 0);
+    for (size_t i = 0; i < world_.buildings.size(); ++i) {
+        const Building& b = world_.buildings[i];
+        if (b.type == BType::Park) continue;
+        float cx = b.pos.x + b.w * 0.5f, cy = b.pos.y + b.h * 0.5f;
+        float rad = std::max(b.w, b.h) * 0.6f;
+        float rearBot = b.pos.y + b.h * (1.0f - kBuildingSolidFrac);
+        bool occ = false;
+        world_.grid.query(cx, cy, rad, [&](int j) {
+            if (occ) return;
+            const Agent& a = world_.agents[j];
+            if (!a.alive || a.sleeping) return;
+            if (a.pos.x >= b.pos.x && a.pos.x <= b.pos.x + b.w &&
+                a.pos.y >= b.pos.y - 8.0f && a.pos.y <= rearBot)
+                occ = true;
+        });
+        buildingOccluded_[i] = occ ? 1 : 0;
+    }
+
+    // Painter's pass: buildings, trees, and agents interleaved by base Y so
+    // agents lower on screen draw in front and higher ones draw behind.
+    struct Item { float key; int type; int idx; }; // type 0=building 1=tree 2=agent
+    static std::vector<Item> items;
+    items.clear();
+    for (int i = 0; i < (int)world_.buildings.size(); ++i)
+        items.push_back({ world_.buildings[i].pos.y + world_.buildings[i].h, 0, i });
+    for (int i = 0; i < (int)world_.trees.size(); ++i)
+        items.push_back({ world_.trees[i].pos.y, 1, i });
+    for (int i = 0; i < (int)world_.agents.size(); ++i) {
+        const Agent& a = world_.agents[i];
+        if (!a.alive || a.sleeping) continue;
+        items.push_back({ a.pos.y, 2, i });
+    }
+    std::sort(items.begin(), items.end(),
+              [](const Item& a, const Item& b) { return a.key < b.key; });
+    for (const Item& it : items) {
+        if (it.type == 0)      renderBuilding(world_.buildings[it.idx],
+                                              buildingOccluded_[it.idx] ? (Uint8)175 : (Uint8)255);
+        else if (it.type == 1) renderTree(world_.trees[it.idx]);
+        else                   renderAgent(world_.agents[it.idx]);
+    }
+
     renderParticles();
     renderFloats();
     renderDayNight();
@@ -481,16 +615,38 @@ void Game::renderGround() {
         draw::rect(ren_, border, {70, 90, 120, 200});
 }
 
-void Game::renderBuilding(const Building& b) {
+void Game::renderGrid() {
+    float wx0, wy0, wx1, wy1;
+    view_.screenToWorld(view_.viewX, view_.viewY, wx0, wy0);
+    view_.screenToWorld(view_.viewX + view_.viewW, view_.viewY + view_.viewH, wx1, wy1);
+    const float step = 100.0f;
+    SDL_Color g{90, 150, 200, 55};
+    float startX = std::floor(wx0 / step) * step;
+    float startY = std::floor(wy0 / step) * step;
+    for (float x = startX; x <= wx1; x += step) {
+        int sx, sy, sx2, sy2;
+        view_.worldToScreen(x, wy0, sx, sy);
+        view_.worldToScreen(x, wy1, sx2, sy2);
+        draw::line(ren_, sx, view_.viewY, sx2, view_.viewY + view_.viewH, g);
+    }
+    for (float y = startY; y <= wy1; y += step) {
+        int sx, sy, sx2, sy2;
+        view_.worldToScreen(wx0, y, sx, sy);
+        view_.worldToScreen(wx1, y, sx2, sy2);
+        draw::line(ren_, view_.viewX, sy, view_.viewX + view_.viewW, sy2, g);
+    }
+}
+
+void Game::renderBuilding(const Building& b, Uint8 alpha) {
     SDL_Rect r;
     if (!view_.worldRectToScreen(b.pos.x, b.pos.y, b.w, b.h, r)) return;
     float bright = dayBrightness();
+    auto A = [&](SDL_Color c) { c.a = (Uint8)((int)c.a * alpha / 255); return c; };
 
     // Shadow.
     if (settings().shadows) {
         SDL_Rect sh = r; sh.x += 5; sh.y += 6;
-        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 90);
-        SDL_RenderFillRect(ren_, &sh);
+        draw::fillRect(ren_, sh, A({0, 0, 0, 90}));
     }
 
     SDL_Color base;
@@ -503,83 +659,128 @@ void Game::renderBuilding(const Building& b) {
         case BType::Hospital:      base = {198, 206, 214, 255}; break;
         default:                   base = {120,120,120,255};    break;
     }
-    // Variant tint.
     base = scaleColor(base, (0.85f + 0.05f * b.variant) * bright);
 
     if (b.type == BType::Park) {
-        draw::roundedRect(ren_, r, std::min(10, r.w / 4), base);
-        // Trees.
-        int trees = std::max(1, (r.w * r.h) / 4000);
-        unsigned seed = b.windowSeed;
-        for (int i = 0; i < trees && i < 24; ++i) {
-            seed = seed * 1103515245u + 12345u;
-            int tx = r.x + 6 + (seed >> 8) % std::max(1, r.w - 12);
-            seed = seed * 1103515245u + 12345u;
-            int ty = r.y + 6 + (seed >> 8) % std::max(1, r.h - 12);
-            int rad = std::max(2, r.w / 20);
-            draw::fillCircle(ren_, tx, ty, rad, scaleColor({40, 100, 50, 255}, bright));
-            draw::fillCircle(ren_, tx, ty, std::max(1, rad - 2), scaleColor({66, 140, 70, 255}, bright));
-        }
+        // Parks are open lawns; greenery now comes from scattered Tree objects.
+        draw::roundedRect(ren_, r, std::min(10, r.w / 4), A(base));
         return;
     }
 
-    // Body.
-    SDL_RenderSetClipRect(ren_, nullptr); // ensure base fill ok
-    SDL_Rect clip{ view_.viewX, view_.viewY, view_.viewW, view_.viewH };
-    SDL_RenderSetClipRect(ren_, &clip);
-    draw::fillRect(ren_, r, base);
-
-    // Roof strip.
+    // Body + roof strip.
+    draw::fillRect(ren_, r, A(base));
     SDL_Rect roof{ r.x, r.y, r.w, std::max(2, r.h / 8) };
-    draw::fillRect(ren_, roof, scaleColor(base, 0.7f));
+    draw::fillRect(ren_, roof, A(scaleColor(base, 0.7f)));
 
-    // Windows (only when big enough on screen).
-    if (r.w > 26 && r.h > 26) {
-        int cell = std::max(8, (int)(14 * view_.cam.zoom));
-        int pad = std::max(3, cell / 3);
-        bool night = bright < 0.6f;
-        unsigned seed = b.windowSeed;
-        SDL_Color wallDark = scaleColor(base, 0.78f);
-        SDL_Color winLit   = {255, 224, 140, 255};
-        SDL_Color winDark  = scaleColor({30, 36, 48, 255}, bright);
-        for (int wy = r.y + roof.h + pad; wy < r.y + r.h - pad; wy += cell) {
-            for (int wx = r.x + pad; wx < r.x + r.w - pad; wx += cell) {
-                seed = seed * 1103515245u + 12345u;
-                bool lit = night && ((seed >> 16) & 7) < 3;
-                // Subtle flicker.
-                if (lit && settings().animations) {
-                    float fl = std::sin(menuAnim_ * 3.0f + (seed & 63));
-                    if (fl < -0.95f) lit = false;
-                }
-                SDL_Rect w{ wx, wy, std::max(2, cell - pad), std::max(2, cell - pad) };
-                draw::fillRect(ren_, w, lit ? winLit : (((seed >> 8) & 1) ? winDark : wallDark));
-            }
+    // Windows laid out in WORLD space so zoom only changes apparent size, never
+    // the pattern. Each pane's lit/dark state is a deterministic hash.
+    int cols = std::max(1, std::min(8, (int)(b.w / 28.0f)));
+    int rows = std::max(1, std::min(9, (int)(b.h / 28.0f)));
+    SDL_Color litCol = windowColor();
+    SDL_Color wallDk = scaleColor(base, 0.74f);
+    float cw = b.w / cols, chh = b.h / rows;
+    for (int gy = 1; gy < rows; ++gy) {          // skip top row under the roof
+        for (int gx = 0; gx < cols; ++gx) {
+            float wpx = b.pos.x + (gx + 0.22f) * cw;
+            float wpy = b.pos.y + (gy + 0.22f) * chh;
+            SDL_Rect wr;
+            if (!view_.worldRectToScreen(wpx, wpy, cw * 0.56f, chh * 0.56f, wr)) continue;
+            if (wr.w < 2 || wr.h < 2) continue;
+            unsigned s = b.windowSeed ^ (unsigned)(gx * 73856093) ^ (unsigned)(gy * 19349663);
+            s = s * 1103515245u + 12345u;
+            bool darkPane = ((s >> 13) & 7) < 2;  // a few panes are just wall
+            draw::fillRect(ren_, wr, A(darkPane ? wallDk : litCol));
         }
     }
 
     // Type markers.
     if (b.type == BType::Hospital && r.w > 16 && r.h > 16) {
         int cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-        int s = std::max(3, r.w / 8);
-        draw::fillRect(ren_, {cx - s / 3, cy - s, (2 * s) / 3, 2 * s}, {220, 60, 60, 255});
-        draw::fillRect(ren_, {cx - s, cy - s / 3, 2 * s, (2 * s) / 3}, {220, 60, 60, 255});
+        int sz = std::max(3, r.w / 8);
+        draw::fillRect(ren_, {cx - sz / 3, cy - sz, (2 * sz) / 3, 2 * sz}, A({220, 60, 60, 255}));
+        draw::fillRect(ren_, {cx - sz, cy - sz / 3, 2 * sz, (2 * sz) / 3}, A({220, 60, 60, 255}));
     } else if (b.type == BType::PoliceStation && r.w > 16 && r.h > 16) {
         int cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-        int s = std::max(3, r.w / 7);
-        draw::fillCircle(ren_, cx, cy, s, {235, 215, 90, 255});
-        draw::fillCircle(ren_, cx, cy, std::max(1, s - 3), {52, 86, 150, 255});
+        int sz = std::max(3, r.w / 7);
+        draw::fillCircle(ren_, cx, cy, sz, A({235, 215, 90, 255}));
+        draw::fillCircle(ren_, cx, cy, std::max(1, sz - 3), A({52, 86, 150, 255}));
     } else if (b.type == BType::Industry && r.w > 16) {
-        // Chimney.
-        SDL_Rect ch{ r.x + (int)(r.w * 0.62f), r.y - std::max(4, r.h / 6), std::max(3, r.w / 10), std::max(4, r.h / 5) };
-        draw::fillRect(ren_, ch, scaleColor({90, 70, 56, 255}, bright));
+        SDL_Rect ch{ r.x + (int)(r.w * 0.62f), r.y - std::max(4, r.h / 6),
+                     std::max(3, r.w / 10), std::max(4, r.h / 5) };
+        draw::fillRect(ren_, ch, A(scaleColor({90, 70, 56, 255}, bright)));
     }
 
     // Outline.
-    draw::rect(ren_, r, scaleColor(base, 0.5f));
+    draw::rect(ren_, r, A(scaleColor(base, 0.5f)));
+}
+
+void Game::renderTree(const Tree& t) {
+    int sx, sy;
+    view_.worldToScreen(t.pos.x, t.pos.y, sx, sy);
+    float zoom = view_.cam.zoom;
+    int h = (int)clampf(t.height * zoom, 4.0f, 220.0f);
+    if (sx < view_.viewX - 50 || sx > view_.viewX + view_.viewW + 50 ||
+        sy < view_.viewY - 90 || sy > view_.viewY + view_.viewH + 50) return;
+    float bright = dayBrightness();
+
+    if (settings().shadows && h > 8)
+        draw::fillCircle(ren_, sx + h / 6, sy, std::max(2, h / 4), {0, 0, 0, 70});
+
+    int trunkH = std::max(2, h / 3);
+    int trunkW = std::max(1, h / 12);
+    SDL_Color trunk = scaleColor({96, 66, 40, 255}, bright);
+    draw::fillRect(ren_, { sx - trunkW / 2, sy - trunkH, std::max(1, trunkW), trunkH }, trunk);
+
+    int canopyR  = std::max(2, h / 3);
+    int canopyCy = sy - trunkH - canopyR / 2;
+    unsigned s = t.seed;
+    auto jitter = [&](int range) { s = s * 1103515245u + 12345u; return (int)((s >> 16) % (2 * range + 1)) - range; };
+
+    switch (t.type) {
+        case TreeType::Deciduous: {
+            draw::fillCircle(ren_, sx, canopyCy, canopyR, scaleColor({44, 104, 52, 255}, bright));
+            draw::fillCircle(ren_, sx - canopyR / 3, canopyCy - canopyR / 4,
+                             std::max(1, canopyR * 2 / 3), scaleColor({70, 142, 74, 255}, bright));
+            break;
+        }
+        case TreeType::Pine: {
+            SDL_Color c = scaleColor({34, 92, 58, 255}, bright);
+            int apex = sy - trunkH - canopyR * 2;
+            int totalH = canopyR * 2 + trunkH / 2;
+            draw::fillTriangleUp(ren_, sx, apex, canopyR, (int)(totalH * 0.55f), scaleColor(c, 1.12f));
+            draw::fillTriangleUp(ren_, sx, apex + (int)(totalH * 0.35f),
+                                 (int)(canopyR * 1.1f), (int)(totalH * 0.6f), c);
+            break;
+        }
+        case TreeType::Willow: {
+            SDL_Color c  = scaleColor({96, 150, 86, 255}, bright);
+            SDL_Color cd = scaleColor({80, 132, 74, 255}, bright);
+            draw::fillCircle(ren_, sx, canopyCy, canopyR, c);
+            for (int i = -2; i <= 2; ++i) {
+                int dx = i * std::max(1, canopyR / 3);
+                draw::line(ren_, sx + dx, canopyCy, sx + dx + jitter(2),
+                           canopyCy + canopyR + jitter(3), cd);
+            }
+            break;
+        }
+        case TreeType::Dead:
+        default: {
+            SDL_Color c = scaleColor({120, 96, 78, 255}, bright);
+            int topY = sy - trunkH - canopyR;
+            draw::line(ren_, sx, sy - trunkH, sx, topY, c);
+            for (int i = 0; i < 4; ++i) {
+                int by = topY + (canopyR * i) / 4;
+                int len = std::max(2, canopyR - i * 2);
+                draw::line(ren_, sx, by, sx - len / 2 + jitter(2), by - len / 2, c);
+                draw::line(ren_, sx, by, sx + len / 2 + jitter(2), by - len / 2, c);
+            }
+            break;
+        }
+    }
 }
 
 void Game::renderAgent(const Agent& a) {
-    if (!a.alive) return;
+    if (!a.alive || a.sleeping) return;
     int sx, sy;
     view_.worldToScreen(a.pos.x, a.pos.y, sx, sy);
     if (sx < view_.viewX - 8 || sx > view_.viewX + view_.viewW + 8 ||
@@ -685,7 +886,8 @@ void Game::renderHUD() {
     draw::line(ren_, 0, HUD_H, s.screenW, HUD_H, {60, 80, 120, 255});
 
     font::drawShadowed(ren_, "CRISTIVERSE", 14, 8, 3, ui::accent());
-    font::draw(ren_, "LOGOS ENGINE", 14, 32, 1, ui::textDim());
+    font::draw(ren_, mode_ == GameMode::Sandbox ? "SANDBOX MODE" : "LOGOS ENGINE", 14, 32, 1,
+               mode_ == GameMode::Sandbox ? SDL_Color{120, 220, 160, 255} : ui::textDim());
 
     // Role chips.
     int x = 236;
@@ -699,14 +901,24 @@ void Game::renderHUD() {
         x += 24 + font::textWidth(buf, 2) + 16;
     }
 
-    // Right side: day phase, fps.
+    // Right side: clock, day phase, fps, speed.
     const char* phase = "DAY";
     if (s.dayNight) {
-        float b = dayBrightness();
-        phase = b > 0.75f ? "NOON" : b > 0.5f ? "DAY" : b > 0.4f ? "DUSK" : "NIGHT";
+        float h = world_.hourOfDay();
+        phase = (h >= 22.0f || h < 5.0f) ? "NIGHT"
+              : (h < 8.0f)  ? "DAWN"
+              : (h < 17.0f) ? "DAY"
+              : (h < 20.0f) ? "DUSK" : "NIGHT";
     }
-    char rbuf[64];
-    std::snprintf(rbuf, sizeof(rbuf), "%s   FPS %d   SPEED %.1fX", phase, (int)fps_, simSpeed_);
+    char rbuf[96];
+    if (s.dayNight) {
+        float hf = world_.hourOfDay();
+        int hh = (int)hf, mm = (int)((hf - hh) * 60.0f) % 60;
+        std::snprintf(rbuf, sizeof(rbuf), "%02d:%02d %s   FPS %d   SPEED %.1fX",
+                      hh, mm, phase, (int)fps_, simSpeed_);
+    } else {
+        std::snprintf(rbuf, sizeof(rbuf), "%s   FPS %d   SPEED %.1fX", phase, (int)fps_, simSpeed_);
+    }
     font::draw(ren_, rbuf, s.screenW - 12, HUD_H / 2 - 6, 2, ui::textDim(), Align::Right);
 }
 
@@ -723,41 +935,84 @@ void Game::renderSidebar() {
     int x = side.x + pad;
     int w = SIDE_W - pad * 2;
     int y = side.y + pad;
+    bool sandbox = (mode_ == GameMode::Sandbox);
 
-    // --- Objective / meters ---
-    font::draw(ren_, "OBJECTIVE", x, y, 2, ui::accent()); y += 22;
-    int remain = std::max(0, (int)(goalTime_ - gameTimer_));
-    char ob[64]; std::snprintf(ob, sizeof(ob), "SURVIVE %02d:%02d", remain / 60, remain % 60);
-    font::draw(ren_, ob, x, y, 2, ui::textMain()); y += 22;
+    // --- Header / meters ---
+    if (sandbox) {
+        font::draw(ren_, "SANDBOX", x, y, 2, {120, 220, 160, 255}); y += 22;
+        font::draw(ren_, "FREE BUILD - NO TIMER", x, y, 1, ui::textDim()); y += 18;
+        font::draw(ren_, "BUDGET: UNLIMITED", x, y, 2, {255, 215, 90, 255}); y += 24;
+    } else {
+        font::draw(ren_, "OBJECTIVE", x, y, 2, ui::accent()); y += 22;
+        int remain = std::max(0, (int)(goalTime_ - gameTimer_));
+        char ob[64]; std::snprintf(ob, sizeof(ob), "SURVIVE %02d:%02d", remain / 60, remain % 60);
+        font::draw(ren_, ob, x, y, 2, ui::textMain()); y += 22;
 
-    // Safety meter.
-    font::draw(ren_, "CITY SAFETY", x, y, 1, ui::textDim()); y += 12;
-    SDL_Rect sm{ x, y, w, 14 };
-    draw::roundedRect(ren_, sm, 4, {40, 46, 60, 255});
-    SDL_Color safeCol = lerpColor({230, 70, 60, 255}, {70, 210, 110, 255}, safety_ / 100.0f);
-    draw::roundedRect(ren_, { x, y, (int)(w * safety_ / 100.0f), 14 }, 4, safeCol);
-    y += 22;
+        font::draw(ren_, "CITY SAFETY", x, y, 1, ui::textDim()); y += 12;
+        SDL_Rect sm{ x, y, w, 14 };
+        draw::roundedRect(ren_, sm, 4, {40, 46, 60, 255});
+        SDL_Color safeCol = lerpColor({230, 70, 60, 255}, {70, 210, 110, 255}, safety_ / 100.0f);
+        draw::roundedRect(ren_, { x, y, (int)(w * safety_ / 100.0f), 14 }, 4, safeCol);
+        y += 22;
 
-    // Budget.
-    char bb[48]; std::snprintf(bb, sizeof(bb), "BUDGET: %d C", (int)budget_);
-    font::draw(ren_, bb, x, y, 2, {255, 215, 90, 255}); y += 26;
-
-    // --- Deploy tools ---
-    font::draw(ren_, "DEPLOY (CLICK MAP)", x, y, 1, ui::textDim()); y += 14;
-    SDL_Rect bp{ x, y, w / 2 - 4, 30 };
-    SDL_Rect bh{ x + w / 2 + 4, y, w / 2 - 4, 30 };
-    SDL_Color polCol = (tool_ == Tool::Police) ? SDL_Color{120, 180, 255, 255} : roleColor(Role::Police);
-    SDL_Color heaCol = (tool_ == Tool::Healer) ? SDL_Color{120, 240, 170, 255} : roleColor(Role::Healer);
-    if (ui::button(ren_, bp, "POLICE 100", in_, polCol, 1)) {
-        tool_ = (tool_ == Tool::Police) ? Tool::None : Tool::Police; audio_.click();
+        char bb[48]; std::snprintf(bb, sizeof(bb), "BUDGET: %d / 500", (int)budget_);
+        font::draw(ren_, bb, x, y, 2, {255, 215, 90, 255}); y += 20;
+        int crime = world_.stats.count[(int)Role::Criminal] + world_.stats.count[(int)Role::Gang];
+        char sl[64]; std::snprintf(sl, sizeof(sl), "SCORE %d   BOUNTIES %d", liveScore(), crime);
+        font::draw(ren_, sl, x, y, 1, ui::textDim()); y += 18;
     }
-    if (ui::button(ren_, bh, "HEALER 80", in_, heaCol, 1)) {
-        tool_ = (tool_ == Tool::Healer) ? Tool::None : Tool::Healer; audio_.click();
+
+    // --- Deploy / spawn tools ---
+    if (sandbox) {
+        font::draw(ren_, "SPAWN (CLICK MAP)", x, y, 1, ui::textDim()); y += 14;
+        struct SB { const char* label; Tool tool; Role role; };
+        SB row1[] = { {"CIVIL 3", Tool::SpawnCivil, Role::Civil},
+                      {"CRIME 4", Tool::SpawnCriminal, Role::Criminal},
+                      {"GANG 7",  Tool::SpawnGang, Role::Gang} };
+        int bw3 = (w - 8) / 3;
+        for (int i = 0; i < 3; ++i) {
+            SDL_Rect b{ x + i * (bw3 + 4), y, bw3, 28 };
+            SDL_Color ac = (tool_ == row1[i].tool) ? SDL_Color{255, 255, 160, 255} : roleColor(row1[i].role);
+            if (ui::button(ren_, b, row1[i].label, in_, ac, 1)) {
+                tool_ = (tool_ == row1[i].tool) ? Tool::None : row1[i].tool; audio_.click();
+            }
+        }
+        y += 32;
+        SB row2[] = { {"POLICE 5", Tool::SpawnPolice, Role::Police},
+                      {"HEAL 6",   Tool::SpawnHealer, Role::Healer} };
+        int bw2 = (w - 4) / 2;
+        for (int i = 0; i < 2; ++i) {
+            SDL_Rect b{ x + i * (bw2 + 4), y, bw2, 28 };
+            SDL_Color ac = (tool_ == row2[i].tool) ? SDL_Color{255, 255, 160, 255} : roleColor(row2[i].role);
+            if (ui::button(ren_, b, row2[i].label, in_, ac, 1)) {
+                tool_ = (tool_ == row2[i].tool) ? Tool::None : row2[i].tool; audio_.click();
+            }
+        }
+        y += 34;
+        SDL_Rect bgrid{ x, y, bw2, 26 };
+        SDL_Rect bresp{ x + bw2 + 4, y, bw2, 26 };
+        bool gridOn = showGrid_;
+        if (ui::toggle(ren_, bgrid, "GRID G", gridOn, in_, 1)) { showGrid_ = gridOn; audio_.click(); }
+        if (ui::button(ren_, bresp, "RESPAWN N", in_, {120, 160, 220, 255}, 1)) {
+            world_.regenerateAgentsOnly(); selectedId_ = -1; audio_.click(); toast("Population respawned");
+        }
+        y += 30;
+    } else {
+        font::draw(ren_, "DEPLOY (CLICK MAP)", x, y, 1, ui::textDim()); y += 14;
+        SDL_Rect bp{ x, y, w / 2 - 4, 30 };
+        SDL_Rect bh{ x + w / 2 + 4, y, w / 2 - 4, 30 };
+        SDL_Color polCol = (tool_ == Tool::Police) ? SDL_Color{120, 180, 255, 255} : roleColor(Role::Police);
+        SDL_Color heaCol = (tool_ == Tool::Healer) ? SDL_Color{120, 240, 170, 255} : roleColor(Role::Healer);
+        if (ui::button(ren_, bp, "POLICE 100", in_, polCol, 1)) {
+            tool_ = (tool_ == Tool::Police) ? Tool::None : Tool::Police; audio_.click();
+        }
+        if (ui::button(ren_, bh, "HEALER 80", in_, heaCol, 1)) {
+            tool_ = (tool_ == Tool::Healer) ? Tool::None : Tool::Healer; audio_.click();
+        }
+        y += 36;
     }
-    y += 36;
     if (tool_ != Tool::None) {
-        std::string t = std::string("ACTIVE: ") + (tool_ == Tool::Police ? "POLICE" : "HEALER") + " (TAB CANCEL)";
-        font::draw(ren_, t, x, y, 1, ui::accent());
+        font::draw(ren_, "TAB = CANCEL TOOL", x, y, 1, ui::accent());
     }
     y += 16;
 
@@ -772,13 +1027,14 @@ void Game::renderSidebar() {
     }
     y += 36;
 
-    // --- Selected agent info ---
-    SDL_Rect infoArea{ x, y, w, 96 };
+    // --- Selected agent info / editor ---
+    int infoH = sandbox ? 162 : 96;
+    SDL_Rect infoArea{ x, y, w, infoH };
     renderInfoPanel(infoArea);
-    y += 104;
+    y += infoH + 8;
 
     // --- Minimap ---
-    int mmH = std::min(w, side.y + side.h - y - 150);
+    int mmH = std::min(w, side.y + side.h - y - 120);
     if (mmH > 60) {
         SDL_Rect mm{ x, y, w, mmH };
         renderMinimap(mm);
@@ -793,17 +1049,34 @@ void Game::renderSidebar() {
 void Game::renderInfoPanel(const SDL_Rect& area) {
     ui::panel(ren_, area);
     int x = area.x + 10, y = area.y + 8;
+    bool sandbox = (mode_ == GameMode::Sandbox);
     if (selectedId_ < 0 || selectedId_ >= (int)world_.agents.size()) {
         font::draw(ren_, "NO SELECTION", x, y, 2, ui::textDim());
-        font::draw(ren_, "CLICK AN AGENT", x, y + 20, 1, ui::textDim());
+        font::draw(ren_, sandbox ? "CLICK AGENT TO EDIT" : "CLICK AN AGENT", x, y + 20, 1, ui::textDim());
         return;
     }
-    const Agent& a = world_.agents[selectedId_];
+    Agent& a = world_.agents[selectedId_];
     SDL_Color rc = roleColor(a.role);
     draw::fillCircle(ren_, x + 8, y + 8, 8, a.alive ? rc : SDL_Color{90, 90, 90, 255});
     char hdr[48]; std::snprintf(hdr, sizeof(hdr), "%s #%d", roleName(a.role), a.id);
     font::draw(ren_, hdr, x + 24, y + 2, 2, ui::textMain());
     if (!a.alive) { font::draw(ren_, "STATUS: DECEASED", x, y + 24, 1, {220, 90, 90, 255}); return; }
+
+    // Sandbox: live-editable stat sliders + remove button.
+    if (sandbox) {
+        int sw = area.w - 20;
+        int yy = y + 30;
+        ui::sliderF(ren_, {x, yy, sw, 16}, "STRESS", a.stress, 0.0f, 1.0f, in_); yy += 34;
+        ui::sliderF(ren_, {x, yy, sw, 16}, "HEALTH", a.health, 0.0f, 1.0f, in_); yy += 34;
+        ui::sliderF(ren_, {x, yy, sw, 16}, "MONEY",  a.money,  0.0f, 500.0f, in_); yy += 28;
+        SDL_Rect rem{ x, yy, sw, 22 };
+        if (ui::button(ren_, rem, "REMOVE AGENT", in_, {200, 90, 90, 255}, 1)) {
+            a.alive = false; audio_.click();
+            world_.spawnBurst(a.pos, {150, 150, 160, 255}, 8, 60.0f);
+            selectedId_ = -1;
+        }
+        return;
+    }
 
     char mb[32]; std::snprintf(mb, sizeof(mb), "MONEY: %d C", (int)a.money);
     font::draw(ren_, mb, x, y + 24, 1, {255, 215, 90, 255});
@@ -892,7 +1165,9 @@ void Game::renderEventLog(const SDL_Rect& area) {
 // Hints / toast
 // =====================================================================
 void Game::renderHints() {
-    const char* h = "WASD/DRAG PAN   WHEEL ZOOM   1 POLICE  2 HEALER   SPACE PAUSE   H HELP   R RESET";
+    const char* h = (mode_ == GameMode::Sandbox)
+        ? "WASD/DRAG PAN  WHEEL ZOOM  3-7 SPAWN  1-2 DEPLOY  G GRID  N RESPAWN  TAB CANCEL  ESC BACK"
+        : "WASD/DRAG PAN   WHEEL ZOOM   1 POLICE  2 HEALER   SPACE PAUSE   H HELP   R RESET";
     int y = settings().screenH - 20;
     SDL_Rect bg{ 0, y - 4, view_.viewX + view_.viewW, 24 };
     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
@@ -943,13 +1218,15 @@ void Game::renderMenu() {
 
     // Buttons.
     int bw = 280, bh = 46, gap = 14;
-    int by = (int)(s.screenH * 0.45f);
-    SDL_Rect bNew { cx - bw / 2, by, bw, bh };
-    SDL_Rect bSet { cx - bw / 2, by + (bh + gap), bw, bh };
-    SDL_Rect bHelp{ cx - bw / 2, by + 2 * (bh + gap), bw, bh };
-    SDL_Rect bQuit{ cx - bw / 2, by + 3 * (bh + gap), bw, bh };
+    int by = (int)(s.screenH * 0.42f);
+    SDL_Rect bNew { cx - bw / 2, by + 0 * (bh + gap), bw, bh };
+    SDL_Rect bSand{ cx - bw / 2, by + 1 * (bh + gap), bw, bh };
+    SDL_Rect bSet { cx - bw / 2, by + 2 * (bh + gap), bw, bh };
+    SDL_Rect bHelp{ cx - bw / 2, by + 3 * (bh + gap), bw, bh };
+    SDL_Rect bQuit{ cx - bw / 2, by + 4 * (bh + gap), bw, bh };
 
     if (ui::button(ren_, bNew, "NEW GAME", in_, ui::accent(), 3))      { audio_.click(); startNewGame(); }
+    if (ui::button(ren_, bSand, "SANDBOX MODE", in_, {120, 220, 160, 255}, 3)) { audio_.click(); startSandbox(); }
     if (ui::button(ren_, bSet, "SETTINGS", in_, {120, 140, 200, 255}, 3)) { audio_.click(); prevState_ = GState::Menu; state_ = GState::Settings; }
     if (ui::button(ren_, bHelp, "HOW TO PLAY", in_, {120, 140, 200, 255}, 3)) { audio_.click(); prevState_ = GState::Menu; state_ = GState::Help; }
     if (ui::button(ren_, bQuit, "QUIT", in_, {180, 90, 90, 255}, 3))   { audio_.click(); running_ = false; }
@@ -960,7 +1237,13 @@ void Game::renderMenu() {
 void Game::renderPause() {
     dimScreen(150);
     int cx = settings().screenW / 2, cy = settings().screenH / 2;
-    font::drawShadowed(ren_, "PAUSED", cx, cy - 110, 8, ui::textMain(), Align::Center);
+    font::drawShadowed(ren_, "PAUSED", cx, cy - 130, 8, ui::textMain(), Align::Center);
+    if (mode_ == GameMode::Sandbox) {
+        font::draw(ren_, "SANDBOX MODE", cx, cy - 78, 2, {120, 220, 160, 255}, Align::Center);
+    } else {
+        char sc[80]; std::snprintf(sc, sizeof(sc), "PROJECTED SCORE: %d", liveScore() + (int)(safety_ * 3));
+        font::draw(ren_, sc, cx, cy - 78, 2, ui::textDim(), Align::Center);
+    }
 
     int bw = 280, bh = 46, gap = 14;
     SDL_Rect bResume{ cx - bw / 2, cy - 30, bw, bh };
@@ -1020,23 +1303,22 @@ void Game::renderHelp() {
     y += 48;
     const char* lines[] = {
         "YOU ARE THE MAYOR OF A LIVING CITY.",
-        "AGENTS ROAM, INTERACT, COMMIT CRIMES,",
-        "GET ARRESTED, AND GET HEALED ON THEIR OWN.",
+        "KEEP CITY SAFETY ABOVE ZERO UNTIL THE",
+        "SURVIVE TIMER RUNS OUT TO WIN.",
         "",
-        "GOAL: KEEP CITY SAFETY ABOVE ZERO",
-        "UNTIL THE SURVIVE TIMER RUNS OUT.",
-        "",
-        "DEPLOY POLICE (1) TO REDUCE CRIME.",
+        "DEPLOY POLICE (1) TO ARREST CRIMINALS.",
         "DEPLOY HEALERS (2) TO REDUCE STRESS.",
-        "CLICK THE MAP TO PLACE THEM (COSTS BUDGET).",
-        "BUDGET REGENERATES OVER TIME.",
+        "EACH ARREST PAYS +$50, EACH HEAL +$10,",
+        "PLUS STEADY CITY INCOME OVER TIME.",
+        "SCORE = ARRESTS*10 + HEALS*5 + TIME.",
         "",
-        "CONTROLS:",
-        "  WASD / ARROWS / RIGHT-DRAG = PAN",
-        "  MOUSE WHEEL = ZOOM",
-        "  LEFT CLICK = SELECT AGENT",
-        "  [ ] = SLOWER / FASTER     SPACE = PAUSE",
-        "  R = NEW CITY              ESC = BACK",
+        "SANDBOX: UNLIMITED BUDGET, SPAWN ANYONE",
+        "(KEYS 3-7), AND EDIT AGENT STATS LIVE.",
+        "",
+        "WASD / ARROWS / RIGHT-DRAG = PAN",
+        "WHEEL = ZOOM    LEFT CLICK = SELECT",
+        "[ ] = SLOWER / FASTER    SPACE = PAUSE",
+        "R = NEW CITY             ESC = BACK",
     };
     for (const char* l : lines) {
         font::draw(ren_, l, x, y, 2, ui::textMain());

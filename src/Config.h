@@ -17,6 +17,7 @@ struct Settings {
 
     int   numAgents    = 1500;      // can push to ~10000
     int   numBuildings = 64;
+    int   numTrees     = 140;       // scattered decorative trees
 
     // Graphics quality toggles (for lower-end machines)
     bool  animations   = true;      // walk-bob, smoke, window flicker
