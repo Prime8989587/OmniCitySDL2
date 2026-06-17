@@ -560,7 +560,7 @@ void Game::renderWorld() {
             const Agent& a = world_.agents[j];
             if (!a.alive || a.sleeping) return;
             if (a.pos.x >= b.pos.x && a.pos.x <= b.pos.x + b.w &&
-                a.pos.y >= b.pos.y - 8.0f && a.pos.y <= rearBot)
+                a.pos.y >= b.pos.y && a.pos.y <= rearBot)
                 occ = true;
         });
         buildingOccluded_[i] = occ ? 1 : 0;
@@ -815,9 +815,9 @@ void Game::renderBuilding(const Building& b, Uint8 alpha) {
     SDL_Rect roof{ r.x, r.y, r.w, roofH };
     draw::fillRect(ren_, roof, A(scaleColor(base, 0.55f)));
 
-    // Chunky window grid: few, large panes with solid lit/dark colors.
-    int cols = std::max(2, std::min(4, (int)(b.w / 60.0f)));
-    int rows = std::max(2, std::min(4, (int)(b.h / 60.0f)));
+    // Chunky window grid: many small panes with solid lit/dark colors for apartments.
+    int cols = std::max(3, std::min(6, (int)(b.w / 35.0f)));
+    int rows = std::max(2, std::min(5, (int)(b.h / 35.0f)));
     SDL_Color litCol  = windowColor();
     SDL_Color darkCol = {28, 32, 42, 255};       // solid "lights off" pane
     float cw = b.w / cols, chh = b.h / rows;
@@ -826,7 +826,7 @@ void Game::renderBuilding(const Building& b, Uint8 alpha) {
             float wpx = b.pos.x + (gx + 0.2f) * cw;
             float wpy = b.pos.y + (gy + 0.2f) * chh;
             SDL_Rect wr;
-            if (!view_.worldRectToScreen(wpx, wpy, cw * 0.6f, chh * 0.6f, wr)) continue;
+            if (!view_.worldRectToScreen(wpx, wpy, cw * 0.5f, chh * 0.5f, wr)) continue;
             if (wr.w < 2 || wr.h < 2) continue;
             unsigned s = b.windowSeed ^ hash2i(gx, gy);
             bool darkPane = ((s >> 13) & 7) < 2;  // a few panes are dark

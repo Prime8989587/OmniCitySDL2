@@ -212,12 +212,20 @@ void World::generateAgents() {
     auto push = [&](Role r) {
         Agent a;
         a.id = (int)agents.size();
-        a.pos = { frand(80.0f, s.worldW - 80.0f), frand(80.0f, s.worldH - 80.0f) };
-        a.vel = { frand(-15.0f, 15.0f), frand(-15.0f, 15.0f) };
         a.role = r;
         a.stress = frand(0.05f, 0.35f);
         a.money  = frand(40.0f, 160.0f);
         a.animPhase = frand(0.0f, 6.28f);
+
+        // Find a valid spawn position that doesn't start inside a building.
+        bool placed = false;
+        for (int attempt = 0; attempt < 8 && !placed; ++attempt) {
+            a.pos = { frand(80.0f, s.worldW - 80.0f), frand(80.0f, s.worldH - 80.0f) };
+            if (!insideBuilding(a.pos.x, a.pos.y)) { placed = true; }
+        }
+        if (!placed) a.pos = { s.worldW * 0.5f, s.worldH * 0.5f }; // fallback to center
+
+        a.vel = { frand(-15.0f, 15.0f), frand(-15.0f, 15.0f) };
         if (r == Role::Civil) a.home = nearestHome(a.pos.x, a.pos.y);
         agents.push_back(a);
     };
