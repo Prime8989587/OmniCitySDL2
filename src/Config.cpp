@@ -51,6 +51,9 @@ void Settings::loadFromFile(const std::string& path) {
             else if (key == "shadows")      shadows      = toBool(val);
             else if (key == "dayNight")     dayNight     = toBool(val);
             else if (key == "particles")    particles    = toBool(val);
+            else if (key == "grass")        grass        = toBool(val);
+            else if (key == "water")        water        = toBool(val);
+            else if (key == "flowers")      flowers      = toBool(val);
             else if (key == "sound")        sound        = toBool(val);
             else if (key == "volume")       volume       = std::stof(val);
         } catch (...) {
@@ -76,6 +79,9 @@ void Settings::saveToFile(const std::string& path) const {
     out << "shadows="      << (shadows ? 1 : 0)    << "\n";
     out << "dayNight="     << (dayNight ? 1 : 0)   << "\n";
     out << "particles="    << (particles ? 1 : 0)  << "\n";
+    out << "grass="        << (grass ? 1 : 0)      << "\n";
+    out << "water="        << (water ? 1 : 0)      << "\n";
+    out << "flowers="      << (flowers ? 1 : 0)    << "\n";
     out << "sound="        << (sound ? 1 : 0)      << "\n";
     out << "volume="       << volume       << "\n";
 }

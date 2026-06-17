@@ -21,9 +21,12 @@ struct Settings {
 
     // Graphics quality toggles (for lower-end machines)
     bool  animations   = true;      // walk-bob, smoke, window flicker
-    bool  shadows      = true;
+    bool  shadows      = true;      // cast shadows under buildings/agents/trees
     bool  dayNight     = true;
     bool  particles    = true;
+    bool  grass        = true;      // procedural textured grass ground
+    bool  water        = true;      // ponds in park zones
+    bool  flowers      = true;      // flower patches in park zones
 
     // Audio (procedural SDL audio, no asset files)
     bool  sound        = true;

@@ -62,6 +62,7 @@ void World::regenerate() {
     log.clear();
     generateBuildings();
     generateTrees();
+    generateParkDecor();
     generateAgents();
     recomputeStats();
     addLog("World generated.", {180, 220, 255, 255});
@@ -120,6 +121,68 @@ void World::generateTrees() {
         t.height = frand(24.0f, 46.0f);
         t.seed   = (unsigned)irand(1, 1 << 30);
         trees.push_back(t);
+    }
+}
+
+void World::generateParkDecor() {
+    waters.clear();
+    flowers.clear();
+    // Flower palette — warm/cool mix so patches look varied and natural.
+    const SDL_Color palette[] = {
+        {232,  76,  76, 255},  // red
+        {248, 208,  72, 255},  // yellow
+        {178,  96, 220, 255},  // purple
+        {244, 244, 250, 255},  // white
+        {244, 140, 196, 255},  // pink
+        {110, 150, 246, 255},  // cornflower blue
+    };
+    const int paletteN = (int)(sizeof(palette) / sizeof(palette[0]));
+
+    for (const auto& b : buildings) {
+        if (b.type != BType::Park) continue;
+        float cx = b.pos.x + b.w * 0.5f;
+        float cy = b.pos.y + b.h * 0.5f;
+
+        // --- Pond: one lake centered in the park (skip very small parks). ---
+        Water pond;
+        bool hasPond = false;
+        if (b.w > 120.0f && b.h > 120.0f) {
+            pond.rx = b.w * frand(0.22f, 0.32f);
+            pond.ry = b.h * frand(0.18f, 0.26f);
+            pond.pos = { cx + frand(-b.w * 0.08f, b.w * 0.08f),
+                         cy + frand(-b.h * 0.08f, b.h * 0.08f) };
+            pond.seed = (unsigned)irand(1, 1 << 30);
+            waters.push_back(pond);
+            hasPond = true;
+        }
+
+        // --- Flower clusters scattered across the lawn, avoiding the pond. ---
+        int clusters = irand(10, 20);
+        for (int c = 0; c < clusters; ++c) {
+            float px = 0, py = 0; bool ok = false;
+            for (int attempt = 0; attempt < 5 && !ok; ++attempt) {
+                px = frand(b.pos.x + 12.0f, b.pos.x + b.w - 12.0f);
+                py = frand(b.pos.y + 12.0f, b.pos.y + b.h - 12.0f);
+                if (hasPond) {
+                    float dx = (px - pond.pos.x) / (pond.rx + 10.0f);
+                    float dy = (py - pond.pos.y) / (pond.ry + 10.0f);
+                    if (dx * dx + dy * dy < 1.0f) continue; // inside/near pond
+                }
+                ok = true;
+            }
+            if (!ok) continue;
+            SDL_Color base = palette[irand(0, paletteN - 1)];
+            int n = irand(3, 5);
+            for (int f = 0; f < n; ++f) {
+                Flower fl;
+                fl.pos = { px + frand(-8.0f, 8.0f), py + frand(-8.0f, 8.0f) };
+                // Slight per-flower hue jitter within the cluster's color.
+                fl.color = scaleColor(base, frand(0.85f, 1.1f));
+                fl.color.a = 255;
+                fl.size = frand(3.0f, 5.0f);
+                flowers.push_back(fl);
+            }
+        }
     }
 }
 

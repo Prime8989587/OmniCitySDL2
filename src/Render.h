@@ -35,8 +35,14 @@ void roundedRect(SDL_Renderer* r, SDL_Rect rc, int radius, SDL_Color c);
 void roundedRectOutline(SDL_Renderer* r, SDL_Rect rc, int radius, SDL_Color c);
 void fillCircle(SDL_Renderer* r, int cx, int cy, int radius, SDL_Color c);
 void circleOutline(SDL_Renderer* r, int cx, int cy, int radius, SDL_Color c);
+// Axis-aligned filled ellipse centered at (cx,cy) with radii rx,ry.
+void fillEllipse(SDL_Renderer* r, int cx, int cy, int rx, int ry, SDL_Color c);
 // Upward isosceles triangle: apex at (cx, apexY), base of width 2*halfW at apexY+height.
 void fillTriangleUp(SDL_Renderer* r, int cx, int apexY, int halfW, int height, SDL_Color c);
+// Vertical trapezoid: top edge [xTopL,xTopR] at yTop, bottom edge [xBotL,xBotR]
+// at yBot, edges linearly interpolated between. Used for 3D roof caps.
+void fillTrapezoid(SDL_Renderer* r, int xTopL, int xTopR, int yTop,
+                   int xBotL, int xBotR, int yBot, SDL_Color c);
 void line(SDL_Renderer* r, int x1, int y1, int x2, int y2, SDL_Color c);
 void thickLine(SDL_Renderer* r, int x1, int y1, int x2, int y2, int w, SDL_Color c);
 // Vertical gradient fill across a rect.

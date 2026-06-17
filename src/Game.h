@@ -86,7 +86,10 @@ private:
     // ---- world rendering ----
     void layoutView();
     void renderWorld();
-    void renderGround();
+    void renderGround();                            // void + textured grass + roads
+    void renderParkDecor();                         // park lawns, ponds, flowers
+    void renderWater(const Water& w);
+    void renderFlower(const Flower& f);
     void renderGrid();                              // sandbox placement overlay
     void renderBuilding(const Building& b, Uint8 alpha);
     void renderTree(const Tree& t);
@@ -119,6 +122,7 @@ private:
     void deployAt(int sx, int sy);
     void toast(const std::string& m) { toastMsg_ = m; toast_ = 2.5f; }
     float dayBrightness() const;       // 0..1 based on world_.dayTime
+    float shadowAlpha() const;         // cast-shadow opacity (fades at night)
     SDL_Color skyTop() const;
     SDL_Color skyBottom() const;
     SDL_Color windowColor() const;     // lit-window tint for current time of day

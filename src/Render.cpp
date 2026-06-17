@@ -127,12 +127,36 @@ void circleOutline(SDL_Renderer* r, int cx, int cy, int radius, SDL_Color c) {
     }
 }
 
+void fillEllipse(SDL_Renderer* r, int cx, int cy, int rx, int ry, SDL_Color c) {
+    if (rx <= 0 || ry <= 0) return;
+    SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+    for (int dy = -ry; dy <= ry; ++dy) {
+        double f = 1.0 - (double)(dy * dy) / (double)(ry * ry);
+        if (f < 0) continue;
+        int dx = (int)std::lround(rx * std::sqrt(f));
+        SDL_RenderDrawLine(r, cx - dx, cy + dy, cx + dx, cy + dy);
+    }
+}
+
 void fillTriangleUp(SDL_Renderer* r, int cx, int apexY, int halfW, int height, SDL_Color c) {
     if (height <= 0) return;
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
     for (int dy = 0; dy <= height; ++dy) {
         int hw = (int)std::lround((double)halfW * dy / height);
         SDL_RenderDrawLine(r, cx - hw, apexY + dy, cx + hw, apexY + dy);
+    }
+}
+
+void fillTrapezoid(SDL_Renderer* r, int xTopL, int xTopR, int yTop,
+                   int xBotL, int xBotR, int yBot, SDL_Color c) {
+    if (yBot < yTop) { std::swap(yTop, yBot); std::swap(xTopL, xBotL); std::swap(xTopR, xBotR); }
+    int span = std::max(1, yBot - yTop);
+    SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+    for (int y = yTop; y <= yBot; ++y) {
+        float t = (float)(y - yTop) / (float)span;
+        int xl = (int)std::lround(xTopL + (xBotL - xTopL) * t);
+        int xr = (int)std::lround(xTopR + (xBotR - xTopR) * t);
+        SDL_RenderDrawLine(r, xl, y, xr, y);
     }
 }
 

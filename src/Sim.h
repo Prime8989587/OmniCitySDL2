@@ -77,6 +77,21 @@ struct Tree {
     unsigned seed = 0;       // per-tree shape variation
 };
 
+// A purely decorative pond placed inside a park zone (non-solid).
+struct Water {
+    Vec2     pos;            // center in world space
+    float    rx = 40.0f;     // half-width  (world units)
+    float    ry = 28.0f;     // half-height (world units)
+    unsigned seed = 0;       // shimmer / wave variation
+};
+
+// A small decorative flower (or flower in a cluster) inside a park (non-solid).
+struct Flower {
+    Vec2      pos;           // base of the stem in world space
+    SDL_Color color{255, 80, 80, 255};
+    float     size = 4.0f;   // petal radius in world units
+};
+
 struct FloatText {
     Vec2  pos;
     std::string text;
@@ -128,6 +143,8 @@ public:
     std::vector<Building>  buildings;
     std::vector<Agent>     agents;
     std::vector<Tree>      trees;
+    std::vector<Water>     waters;
+    std::vector<Flower>    flowers;
     std::vector<Particle>  particles;
     std::vector<FloatText> floats;
     std::vector<LogEntry>  log;
@@ -156,6 +173,7 @@ public:
 private:
     void generateBuildings();
     void generateTrees();
+    void generateParkDecor();   // ponds + flowers inside park zones
     void generateAgents();
     bool insideBuilding(float x, float y, BType* outType = nullptr) const;
 };

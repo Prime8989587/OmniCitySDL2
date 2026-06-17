@@ -23,6 +23,17 @@ inline int irand(int a, int b) {
 }
 inline float chance01() { return frand(0.0f, 1.0f); }
 
+// Deterministic spatial hash — same (x,y) always yields the same value, so
+// procedural detail (grass, shimmer) is stable across frames, pan, and zoom.
+inline unsigned hash2i(int x, int y) {
+    unsigned h = (unsigned)x * 73856093u ^ (unsigned)y * 19349663u;
+    h ^= h >> 13; h *= 1274126177u; h ^= h >> 16;
+    return h;
+}
+inline float hashf(int x, int y) { // 0..1
+    return (hash2i(x, y) & 0xFFFFFFu) / (float)0xFFFFFF;
+}
+
 // ---------------- Vec2 ----------------
 struct Vec2 {
     float x = 0, y = 0;

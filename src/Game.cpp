@@ -191,8 +191,10 @@ void Game::handleEvents() {
                 // "Back" walks one step out: Playing -> Paused -> Menu -> quit.
                 if (state_ == GState::Playing)       state_ = GState::Paused;
                 else if (state_ == GState::Paused)   { state_ = GState::Menu; fade_ = 0.6f; }
-                else if (state_ == GState::Settings ||
-                         state_ == GState::Help)     state_ = prevState_;
+                else if (state_ == GState::Settings) {
+                    settings().saveToFile("cristiverse.cfg");
+                    state_ = prevState_;
+                } else if (state_ == GState::Help)   state_ = prevState_;
                 else if (state_ == GState::GameOver) state_ = GState::Menu;
                 else if (state_ == GState::Menu)     running_ = false;
             }
@@ -436,6 +438,11 @@ float Game::dayBrightness() const {
     float b = (std::sin(world_.dayTime * 6.2831853f - 1.5707963f) + 1.0f) * 0.5f;
     return 0.32f + 0.68f * b;
 }
+// Cast shadows are strongest under the midday sun and fade away at night.
+float Game::shadowAlpha() const {
+    if (!settings().shadows) return 0.0f;
+    return 0.10f + 0.30f * dayBrightness();
+}
 SDL_Color Game::skyTop() const {
     float b = dayBrightness();
     return scaleColor({26, 36, 44, 255}, b);
@@ -520,6 +527,7 @@ void Game::renderWorld() {
     SDL_RenderSetClipRect(ren_, &clip);
 
     renderGround();
+    renderParkDecor();
     if (showGrid_ && mode_ == GameMode::Sandbox) renderGrid();
 
     // Determine which buildings have an awake agent behind them => see-through.
@@ -547,8 +555,10 @@ void Game::renderWorld() {
     struct Item { float key; int type; int idx; }; // type 0=building 1=tree 2=agent
     static std::vector<Item> items;
     items.clear();
-    for (int i = 0; i < (int)world_.buildings.size(); ++i)
+    for (int i = 0; i < (int)world_.buildings.size(); ++i) {
+        if (world_.buildings[i].type == BType::Park) continue; // lawns drawn in renderParkDecor
         items.push_back({ world_.buildings[i].pos.y + world_.buildings[i].h, 0, i });
+    }
     for (int i = 0; i < (int)world_.trees.size(); ++i)
         items.push_back({ world_.trees[i].pos.y, 1, i });
     for (int i = 0; i < (int)world_.agents.size(); ++i) {
@@ -584,16 +594,67 @@ void Game::renderWorld() {
 }
 
 void Game::renderGround() {
+    auto& s = settings();
     SDL_Rect v{ view_.viewX, view_.viewY, view_.viewW, view_.viewH };
-    draw::vGradient(ren_, v, skyTop(), skyBottom());
+    float b = dayBrightness();
 
-    // Road grid in world space.
+    // Dark "void" beyond the world edges.
+    draw::fillRect(ren_, v, scaleColor({18, 22, 24, 255}, b));
+
+    // Visible world bounds (clamped to the actual world rect).
     float wx0, wy0, wx1, wy1;
     view_.screenToWorld(view_.viewX, view_.viewY, wx0, wy0);
     view_.screenToWorld(view_.viewX + view_.viewW, view_.viewY + view_.viewH, wx1, wy1);
+    float gx0 = clampf(wx0, 0.0f, s.worldW), gy0 = clampf(wy0, 0.0f, s.worldH);
+    float gx1 = clampf(wx1, 0.0f, s.worldW), gy1 = clampf(wy1, 0.0f, s.worldH);
+
+    SDL_Color grassBase = scaleColor({58, 96, 54, 255}, b);
+    if (!s.grass) {
+        // Flat lawn fallback for low-end machines.
+        SDL_Rect gr;
+        if (view_.worldRectToScreen(gx0, gy0, gx1 - gx0, gy1 - gy0, gr))
+            draw::fillRect(ren_, gr, grassBase);
+    } else if (gx1 > gx0 && gy1 > gy0) {
+        // Procedural textured grass: per-tile brightness from a stable spatial
+        // hash so the pattern never shifts when panning or zooming. Tiles are in
+        // world space, so they tile seamlessly across the whole map.
+        const float cell = 24.0f;
+        float startX = std::floor(gx0 / cell) * cell;
+        float startY = std::floor(gy0 / cell) * cell;
+        for (float wy = startY; wy < gy1; wy += cell) {
+            for (float wx = startX; wx < gx1; wx += cell) {
+                float tx0 = std::max(wx, gx0), ty0 = std::max(wy, gy0);
+                float tx1 = std::min(wx + cell, gx1), ty1 = std::min(wy + cell, gy1);
+                SDL_Rect tr;
+                if (!view_.worldRectToScreen(tx0, ty0, tx1 - tx0, ty1 - ty0, tr)) continue;
+                if (tr.w <= 0 || tr.h <= 0) continue;
+                int hx = (int)std::floor(wx / cell), hy = (int)std::floor(wy / cell);
+                float vrand = hashf(hx, hy);                 // 0..1
+                float shade = 0.90f + 0.16f * vrand;         // +/- ~8%
+                // Faint green-channel boost for a couple of tiles → "lusher" tufts.
+                SDL_Color tile = scaleColor(grassBase, shade);
+                if (((hash2i(hx, hy) >> 9) & 7) == 0)
+                    tile = scaleColor(tile, 1.08f);
+                draw::fillRect(ren_, tr, tile);
+                // Short blade strokes when zoomed in enough to see them.
+                if (tr.w >= 12 && tr.h >= 12) {
+                    SDL_Color blade = scaleColor(grassBase, 0.78f);
+                    int blades = 2;
+                    for (int k = 0; k < blades; ++k) {
+                        unsigned hs = hash2i(hx * 7 + k, hy * 13 + k);
+                        int bx = tr.x + (int)(hs % (unsigned)tr.w);
+                        int by = tr.y + (int)((hs >> 8) % (unsigned)tr.h);
+                        int bl = std::max(2, tr.h / 4);
+                        draw::line(ren_, bx, by, bx, by - bl, blade);
+                    }
+                }
+            }
+        }
+    }
+
+    // Road grid in world space.
     const float step = 200.0f;
-    float b = dayBrightness();
-    SDL_Color road = scaleColor({40, 48, 58, 255}, b);
+    SDL_Color road = scaleColor({72, 86, 70, 255}, b);
     float startX = std::floor(wx0 / step) * step;
     float startY = std::floor(wy0 / step) * step;
     for (float x = startX; x <= wx1; x += step) {
@@ -613,6 +674,98 @@ void Game::renderGround() {
     SDL_Rect border;
     if (view_.worldRectToScreen(0, 0, settings().worldW, settings().worldH, border))
         draw::rect(ren_, border, {70, 90, 120, 200});
+}
+
+// Park lawns, ponds, and flowers form a ground "decoration" layer drawn after
+// the grass but before the depth-sorted entities, so agents and trees always
+// pass in front of them.
+void Game::renderParkDecor() {
+    float bright = dayBrightness();
+
+    // --- Park lawns (a slightly richer green than the surrounding grass). ---
+    for (const auto& b : world_.buildings) {
+        if (b.type != BType::Park) continue;
+        SDL_Rect r;
+        if (!view_.worldRectToScreen(b.pos.x, b.pos.y, b.w, b.h, r)) continue;
+        SDL_Color lawn = scaleColor({64, 122, 64, 255}, (0.9f + 0.04f * b.variant) * bright);
+        draw::roundedRect(ren_, r, std::min(12, r.w / 5), lawn);
+        draw::roundedRectOutline(ren_, r, std::min(12, r.w / 5),
+                                 scaleColor(lawn, 1.18f));
+    }
+
+    // --- Ponds, then flowers on top of the lawn. ---
+    if (settings().water)
+        for (const auto& w : world_.waters) renderWater(w);
+    if (settings().flowers)
+        for (const auto& f : world_.flowers) renderFlower(f);
+}
+
+void Game::renderWater(const Water& w) {
+    int cx, cy;
+    view_.worldToScreen(w.pos.x, w.pos.y, cx, cy);
+    float zoom = view_.cam.zoom;
+    int rx = (int)(w.rx * zoom), ry = (int)(w.ry * zoom);
+    if (rx < 2 || ry < 2) return;
+    if (cx + rx < view_.viewX || cx - rx > view_.viewX + view_.viewW ||
+        cy + ry < view_.viewY || cy - ry > view_.viewY + view_.viewH) return;
+
+    float bright = dayBrightness();
+
+    // Damp, sandy shoreline ring just outside the water.
+    draw::fillEllipse(ren_, cx, cy + std::max(1, ry / 12), rx + std::max(2, rx / 14),
+                      ry + std::max(2, ry / 14), scaleColor({150, 140, 96, 255}, bright));
+    // Deep water body (radial-ish gradient: darker core, lighter rim).
+    draw::fillEllipse(ren_, cx, cy, rx, ry, scaleColor({36, 96, 150, 255}, bright));
+    draw::fillEllipse(ren_, cx, cy, (int)(rx * 0.7f), (int)(ry * 0.7f),
+                      scaleColor({26, 74, 126, 255}, bright));
+    // Sky-lit highlight toward the upper-left.
+    draw::fillEllipse(ren_, cx - rx / 5, cy - ry / 4, (int)(rx * 0.34f), (int)(ry * 0.30f),
+                      scaleColor({86, 158, 206, 255}, bright));
+
+    // Subtle wave shimmer: a few horizontal strokes whose phase drifts slowly
+    // with the day clock (cheap, no per-frame state).
+    SDL_Color shimmer = scaleColor({150, 196, 224, 255}, bright);
+    shimmer.a = 150;
+    int waves = std::max(2, ry / 4);
+    float phase = world_.dayTime * 6.2831853f;
+    for (int i = 0; i < waves; ++i) {
+        unsigned h = w.seed ^ hash2i(i, (int)(w.pos.x));
+        int wy = cy - ry + (int)((h % 1000) / 1000.0f * (2 * ry));
+        int half = (int)(rx * (0.3f + 0.4f * ((h >> 10) % 1000) / 1000.0f));
+        int ox = (int)(std::sin(phase + i) * std::max(1, rx / 8));
+        int yy = cy + (int)((wy - cy) * 0.9f);
+        draw::line(ren_, cx - half + ox, yy, cx + half + ox, yy, shimmer);
+    }
+    draw::circleOutline(ren_, cx, cy, std::min(rx, ry), scaleColor({18, 52, 92, 255}, bright));
+}
+
+void Game::renderFlower(const Flower& f) {
+    int sx, sy;
+    view_.worldToScreen(f.pos.x, f.pos.y, sx, sy);
+    if (sx < view_.viewX - 6 || sx > view_.viewX + view_.viewW + 6 ||
+        sy < view_.viewY - 6 || sy > view_.viewY + view_.viewH + 6) return;
+    float zoom = view_.cam.zoom;
+    int pr = (int)clampf(f.size * zoom, 1.0f, 10.0f);
+    float bright = dayBrightness();
+
+    // Tiny ground shadow.
+    if (settings().shadows && pr >= 2)
+        draw::fillEllipse(ren_, sx + 1, sy + 1, std::max(1, pr), std::max(1, pr / 2),
+                          {0, 0, 0, (Uint8)(shadowAlpha() * 110)});
+
+    int stemH = std::max(2, (int)(f.size * 1.4f * zoom));
+    SDL_Color stem = scaleColor({60, 130, 60, 255}, bright);
+    draw::line(ren_, sx, sy, sx, sy - stemH, stem);
+
+    int headY = sy - stemH;
+    SDL_Color petal = scaleColor(f.color, bright);
+    if (pr <= 1) { draw::fillCircle(ren_, sx, headY, 1, petal); return; }
+    // Four petals around a center.
+    draw::fillCircle(ren_, sx - pr, headY, pr, petal);
+    draw::fillCircle(ren_, sx + pr, headY, pr, petal);
+    draw::fillCircle(ren_, sx, headY - pr, pr, petal);
+    draw::fillCircle(ren_, sx, headY + pr, pr, petal);
+    draw::fillCircle(ren_, sx, headY, std::max(1, pr), scaleColor({252, 224, 120, 255}, bright));
 }
 
 void Game::renderGrid() {
@@ -643,10 +796,13 @@ void Game::renderBuilding(const Building& b, Uint8 alpha) {
     float bright = dayBrightness();
     auto A = [&](SDL_Color c) { c.a = (Uint8)((int)c.a * alpha / 255); return c; };
 
-    // Shadow.
+    // Ground shadow cast toward the lower-right; longer for taller buildings,
+    // stronger at midday and gone at night.
     if (settings().shadows) {
-        SDL_Rect sh = r; sh.x += 5; sh.y += 6;
-        draw::fillRect(ren_, sh, A({0, 0, 0, 90}));
+        float zoom = view_.cam.zoom;
+        int off = (int)clampf(b.h * 0.10f * zoom, 4.0f, 42.0f);
+        SDL_Rect sh{ r.x + off, r.y + off, r.w, r.h };
+        draw::fillRect(ren_, sh, {0, 0, 0, (Uint8)(shadowAlpha() * 130)});
     }
 
     SDL_Color base;
@@ -671,6 +827,20 @@ void Game::renderBuilding(const Building& b, Uint8 alpha) {
     draw::fillRect(ren_, r, A(base));
     SDL_Rect roof{ r.x, r.y, r.w, std::max(2, r.h / 8) };
     draw::fillRect(ren_, roof, A(scaleColor(base, 0.7f)));
+
+    // 3D roof cap: a slightly recessed trapezoid above the roof to suggest
+    // depth and a peaked or flat top. The color is darker than the roof.
+    if (r.h > 16) {
+        int capH = std::max(3, r.h / 12);
+        int roofW = std::max(2, r.w / 20);
+        int capTL = r.x + roofW, capTR = r.x + r.w - roofW;
+        int capBL = r.x, capBR = r.x + r.w;
+        int capTop = r.y - capH, capBot = r.y;
+        SDL_Color cap = A(scaleColor(base, 0.55f));
+        draw::fillTrapezoid(ren_, capTL, capTR, capTop, capBL, capBR, capBot, cap);
+        // Edge highlight at roof-to-wall boundary.
+        draw::line(ren_, r.x, r.y, r.x + r.w, r.y, A(scaleColor(base, 0.83f)));
+    }
 
     // Windows laid out in WORLD space so zoom only changes apparent size, never
     // the pattern. Each pane's lit/dark state is a deterministic hash.
@@ -724,7 +894,8 @@ void Game::renderTree(const Tree& t) {
     float bright = dayBrightness();
 
     if (settings().shadows && h > 8)
-        draw::fillCircle(ren_, sx + h / 6, sy, std::max(2, h / 4), {0, 0, 0, 70});
+        draw::fillCircle(ren_, sx + h / 6, sy, std::max(2, h / 4),
+                         {0, 0, 0, (Uint8)(shadowAlpha() * 130)});
 
     int trunkH = std::max(2, h / 3);
     int trunkW = std::max(1, h / 12);
@@ -804,6 +975,13 @@ void Game::renderAgent(const Agent& a) {
         bob = (int)(std::sin(a.animPhase) * (rad * 0.25f));
 
     int cy = sy - bob;
+
+    // Ground shadow beneath agent.
+    if (settings().shadows && rad >= 3) {
+        int shRx = (int)(rad * 0.7f), shRy = std::max(1, rad / 3);
+        draw::fillEllipse(ren_, sx + 2, sy + 3, shRx, shRy,
+                          {0, 0, 0, (Uint8)(shadowAlpha() * 90)});
+    }
 
     // Selection ring (pulsing).
     if (a.id == selectedId_) {
@@ -1270,6 +1448,9 @@ void Game::renderSettingsScreen() {
     b = s.shadows;    if (ui::toggle(ren_, {x, y, w, th}, "SHADOWS", b, in_))    { s.shadows = b; audio_.click(); } y += th + gap;
     b = s.dayNight;   if (ui::toggle(ren_, {x, y, w, th}, "DAY/NIGHT", b, in_))  { s.dayNight = b; audio_.click(); } y += th + gap;
     b = s.particles;  if (ui::toggle(ren_, {x, y, w, th}, "PARTICLES", b, in_))  { s.particles = b; audio_.click(); } y += th + gap;
+    b = s.grass;      if (ui::toggle(ren_, {x, y, w, th}, "GRASS TEXTURE", b, in_)) { s.grass = b; audio_.click(); } y += th + gap;
+    b = s.water;      if (ui::toggle(ren_, {x, y, w, th}, "WATER", b, in_))      { s.water = b; audio_.click(); } y += th + gap;
+    b = s.flowers;    if (ui::toggle(ren_, {x, y, w, th}, "FLOWERS", b, in_))    { s.flowers = b; audio_.click(); } y += th + gap;
     b = s.sound;      if (ui::toggle(ren_, {x, y, w, th}, "SOUND", b, in_))      { s.sound = b; audio_.click(); } y += th + gap + 14;
 
     float vol = s.volume;
@@ -1284,12 +1465,18 @@ void Game::renderSettingsScreen() {
 
     SDL_Rect bApply{ x, y, w / 2 - 6, 36 };
     SDL_Rect bBack { x + w / 2 + 6, y, w / 2 - 6, 36 };
-    if (ui::button(ren_, bApply, "APPLY + NEW WORLD", in_, {120, 200, 140, 255}, 1)) {
-        audio_.click(); world_.regenerate();
+    if (ui::button(ren_, bApply, "REBUILD WORLD", in_, {120, 200, 140, 255}, 1)) {
+        audio_.click(); settings().saveToFile("cristiverse.cfg");
+        world_.regenerate();
         view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.55f);
-        toast("World rebuilt");
+        toast("Settings saved. World rebuilt.");
     }
-    if (ui::button(ren_, bBack, "BACK", in_, ui::accent(), 2)) { audio_.click(); state_ = prevState_; }
+    if (ui::button(ren_, bBack, "SAVE & GO BACK", in_, ui::accent(), 2)) {
+        audio_.click();
+        settings().saveToFile("cristiverse.cfg");
+        state_ = prevState_;
+        toast("Settings saved.");
+    }
 }
 
 void Game::renderHelp() {
