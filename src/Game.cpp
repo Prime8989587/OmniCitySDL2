@@ -443,6 +443,22 @@ float Game::shadowAlpha() const {
     if (!settings().shadows) return 0.0f;
     return 0.10f + 0.30f * dayBrightness();
 }
+
+// Count how many agents are currently visible on screen (for HUD display).
+int Game::countVisibleEntities() const {
+    int count = 0;
+    for (const auto& a : world_.agents) {
+        if (!a.alive || a.sleeping) continue;
+        int sx, sy;
+        view_.worldToScreen(a.pos.x, a.pos.y, sx, sy);
+        float zoom = view_.cam.zoom;
+        int rad = (int)clampf(zoom * 4.5f, 2.0f, 16.0f);
+        if (sx < view_.viewX - 8 - rad && sx > view_.viewX + view_.viewW + 8 + rad) continue;
+        if (sy < view_.viewY - 8 - rad && sy > view_.viewY + view_.viewH + 8 + rad) continue;
+        count++;
+    }
+    return count;
+}
 SDL_Color Game::skyTop() const {
     float b = dayBrightness();
     return scaleColor({26, 36, 44, 255}, b);
@@ -711,32 +727,8 @@ void Game::renderWater(const Water& w) {
 
     float bright = dayBrightness();
 
-    // Damp, sandy shoreline ring just outside the water.
-    draw::fillEllipse(ren_, cx, cy + std::max(1, ry / 12), rx + std::max(2, rx / 14),
-                      ry + std::max(2, ry / 14), scaleColor({150, 140, 96, 255}, bright));
-    // Deep water body (radial-ish gradient: darker core, lighter rim).
-    draw::fillEllipse(ren_, cx, cy, rx, ry, scaleColor({36, 96, 150, 255}, bright));
-    draw::fillEllipse(ren_, cx, cy, (int)(rx * 0.7f), (int)(ry * 0.7f),
-                      scaleColor({26, 74, 126, 255}, bright));
-    // Sky-lit highlight toward the upper-left.
-    draw::fillEllipse(ren_, cx - rx / 5, cy - ry / 4, (int)(rx * 0.34f), (int)(ry * 0.30f),
-                      scaleColor({86, 158, 206, 255}, bright));
-
-    // Subtle wave shimmer: a few horizontal strokes whose phase drifts slowly
-    // with the day clock (cheap, no per-frame state).
-    SDL_Color shimmer = scaleColor({150, 196, 224, 255}, bright);
-    shimmer.a = 150;
-    int waves = std::max(2, ry / 4);
-    float phase = world_.dayTime * 6.2831853f;
-    for (int i = 0; i < waves; ++i) {
-        unsigned h = w.seed ^ hash2i(i, (int)(w.pos.x));
-        int wy = cy - ry + (int)((h % 1000) / 1000.0f * (2 * ry));
-        int half = (int)(rx * (0.3f + 0.4f * ((h >> 10) % 1000) / 1000.0f));
-        int ox = (int)(std::sin(phase + i) * std::max(1, rx / 8));
-        int yy = cy + (int)((wy - cy) * 0.9f);
-        draw::line(ren_, cx - half + ox, yy, cx + half + ox, yy, shimmer);
-    }
-    draw::circleOutline(ren_, cx, cy, std::min(rx, ry), scaleColor({18, 52, 92, 255}, bright));
+    // Simple solid blue water body, no shimmer or shoreline complexity.
+    draw::fillEllipse(ren_, cx, cy, rx, ry, scaleColor({42, 112, 170, 255}, bright));
 }
 
 void Game::renderFlower(const Flower& f) {
@@ -1079,7 +1071,8 @@ void Game::renderHUD() {
         x += 24 + font::textWidth(buf, 2) + 16;
     }
 
-    // Right side: clock, day phase, fps, speed.
+    // Right side: clock, day phase, fps, speed, entity count.
+    int visibleCount = countVisibleEntities();
     const char* phase = "DAY";
     if (s.dayNight) {
         float h = world_.hourOfDay();
@@ -1092,10 +1085,10 @@ void Game::renderHUD() {
     if (s.dayNight) {
         float hf = world_.hourOfDay();
         int hh = (int)hf, mm = (int)((hf - hh) * 60.0f) % 60;
-        std::snprintf(rbuf, sizeof(rbuf), "%02d:%02d %s   FPS %d   SPEED %.1fX",
-                      hh, mm, phase, (int)fps_, simSpeed_);
+        std::snprintf(rbuf, sizeof(rbuf), "%02d:%02d %s   ENTITIES %d   FPS %d   SPEED %.1fX",
+                      hh, mm, phase, visibleCount, (int)fps_, simSpeed_);
     } else {
-        std::snprintf(rbuf, sizeof(rbuf), "%s   FPS %d   SPEED %.1fX", phase, (int)fps_, simSpeed_);
+        std::snprintf(rbuf, sizeof(rbuf), "%s   ENTITIES %d   FPS %d   SPEED %.1fX", phase, visibleCount, (int)fps_, simSpeed_);
     }
     font::draw(ren_, rbuf, s.screenW - 12, HUD_H / 2 - 6, 2, ui::textDim(), Align::Right);
 }

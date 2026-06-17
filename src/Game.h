@@ -123,6 +123,7 @@ private:
     void toast(const std::string& m) { toastMsg_ = m; toast_ = 2.5f; }
     float dayBrightness() const;       // 0..1 based on world_.dayTime
     float shadowAlpha() const;         // cast-shadow opacity (fades at night)
+    int   countVisibleEntities() const;  // agents visible in current view
     SDL_Color skyTop() const;
     SDL_Color skyBottom() const;
     SDL_Color windowColor() const;     // lit-window tint for current time of day
