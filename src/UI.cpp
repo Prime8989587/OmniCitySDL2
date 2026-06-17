@@ -7,8 +7,8 @@ namespace ui {
 
 void panel(SDL_Renderer* r, const SDL_Rect& rc, SDL_Color bg, SDL_Color edge) {
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    draw::roundedRect(r, rc, 8, bg);
-    draw::roundedRectOutline(r, rc, 8, edge);
+    draw::fillRect(r, rc, bg);
+    draw::thickRect(r, rc, 2, edge);
 }
 void panel(SDL_Renderer* r, const SDL_Rect& rc) { panel(r, rc, panelBg(), panelEdge()); }
 
@@ -21,8 +21,8 @@ bool button(SDL_Renderer* r, const SDL_Rect& rc, const std::string& label,
                          : SDL_Color{34, 42, 60, 255};
     SDL_Color edge = hov ? accentCol : SDL_Color{70, 86, 120, 255};
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    draw::roundedRect(r, rc, 6, bg);
-    draw::roundedRectOutline(r, rc, 6, edge);
+    draw::fillRect(r, rc, bg);
+    draw::thickRect(r, rc, hov ? 2 : 1, edge);
     SDL_Color tc = hov ? SDL_Color{255,255,255,255} : textMain();
     font::draw(r, label, rc.x + rc.w / 2, rc.y + (rc.h - font::textHeight(textScale)) / 2,
                textScale, tc, Align::Center);
@@ -37,8 +37,8 @@ bool toggle(SDL_Renderer* r, const SDL_Rect& rc, const std::string& label,
     SDL_Color bg = value ? scaleColor(on, hov ? 0.7f : 0.55f)
                          : scaleColor(off, hov ? 0.7f : 0.55f);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    draw::roundedRect(r, rc, 6, bg);
-    draw::roundedRectOutline(r, rc, 6, hov ? accent() : panelEdge());
+    draw::fillRect(r, rc, bg);
+    draw::thickRect(r, rc, hov ? 2 : 1, hov ? accent() : panelEdge());
     std::string txt = label + (value ? ": ON" : ": OFF");
     font::draw(r, txt, rc.x + rc.w / 2, rc.y + (rc.h - font::textHeight(textScale)) / 2,
                textScale, textMain(), Align::Center);
@@ -52,14 +52,16 @@ bool sliderF(SDL_Renderer* r, const SDL_Rect& rc, const std::string& label,
     font::draw(r, label, rc.x, rc.y - font::textHeight(1) - 4, 1, textDim(), Align::Left);
     SDL_Rect track{ rc.x, rc.y + rc.h / 2 - 3, rc.w, 6 };
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    draw::roundedRect(r, track, 3, {40, 48, 66, 255});
+    draw::fillRect(r, track, {40, 48, 66, 255});
     float t = (value - minV) / (maxV - minV);
     t = clampf(t, 0.0f, 1.0f);
     SDL_Rect fill{ rc.x, track.y, (int)(rc.w * t), track.h };
-    draw::roundedRect(r, fill, 3, accent());
+    draw::fillRect(r, fill, accent());
     int knobX = rc.x + (int)(rc.w * t);
     bool hov = in.hit(rc);
-    draw::fillCircle(r, knobX, rc.y + rc.h / 2, 8, hov ? SDL_Color{255,255,255,255} : SDL_Color{200,210,230,255});
+    SDL_Rect knob{ knobX - 5, rc.y + rc.h / 2 - 6, 10, 12 };
+    draw::fillRect(r, knob, hov ? SDL_Color{255,255,255,255} : SDL_Color{200,210,230,255});
+    draw::rect(r, knob, {30, 36, 50, 255});
 
     bool changed = false;
     if (hov && in.mouseDown) {

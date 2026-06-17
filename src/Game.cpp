@@ -631,10 +631,13 @@ void Game::renderGround() {
         if (view_.worldRectToScreen(gx0, gy0, gx1 - gx0, gy1 - gy0, gr))
             draw::fillRect(ren_, gr, grassBase);
     } else if (gx1 > gx0 && gy1 > gy0) {
-        // Procedural textured grass: per-tile brightness from a stable spatial
-        // hash so the pattern never shifts when panning or zooming. Tiles are in
-        // world space, so they tile seamlessly across the whole map.
-        const float cell = 24.0f;
+        // Pixel-art grass: a two-tone checkerboard of world-space tiles with
+        // occasional darker stipple specks. The pattern comes from a stable
+        // spatial hash so it never shifts when panning or zooming, and the
+        // checker reads as an obvious retro tiled texture.
+        const float cell = 22.0f;
+        SDL_Color grassDk = scaleColor({46, 82, 44, 255}, b);   // checker dark
+        SDL_Color speck   = scaleColor({38, 70, 38, 255}, b);   // stipple
         float startX = std::floor(gx0 / cell) * cell;
         float startY = std::floor(gy0 / cell) * cell;
         for (float wy = startY; wy < gy1; wy += cell) {
@@ -645,51 +648,43 @@ void Game::renderGround() {
                 if (!view_.worldRectToScreen(tx0, ty0, tx1 - tx0, ty1 - ty0, tr)) continue;
                 if (tr.w <= 0 || tr.h <= 0) continue;
                 int hx = (int)std::floor(wx / cell), hy = (int)std::floor(wy / cell);
-                float vrand = hashf(hx, hy);                 // 0..1
-                float shade = 0.90f + 0.16f * vrand;         // +/- ~8%
-                // Faint green-channel boost for a couple of tiles → "lusher" tufts.
-                SDL_Color tile = scaleColor(grassBase, shade);
-                if (((hash2i(hx, hy) >> 9) & 7) == 0)
-                    tile = scaleColor(tile, 1.08f);
+                SDL_Color tile = ((hx + hy) & 1) ? grassBase : grassDk;  // checkerboard
                 draw::fillRect(ren_, tr, tile);
-                // Short blade strokes when zoomed in enough to see them.
-                if (tr.w >= 12 && tr.h >= 12) {
-                    SDL_Color blade = scaleColor(grassBase, 0.78f);
-                    int blades = 2;
-                    for (int k = 0; k < blades; ++k) {
-                        unsigned hs = hash2i(hx * 7 + k, hy * 13 + k);
-                        int bx = tr.x + (int)(hs % (unsigned)tr.w);
-                        int by = tr.y + (int)((hs >> 8) % (unsigned)tr.h);
-                        int bl = std::max(2, tr.h / 4);
-                        draw::line(ren_, bx, by, bx, by - bl, blade);
-                    }
+                // Occasional darker stipple block for blocky texture.
+                if (((hash2i(hx, hy) >> 7) & 3) == 0 && tr.w >= 4 && tr.h >= 4) {
+                    int ss = std::max(2, tr.w / 3);
+                    unsigned hs = hash2i(hx * 3 + 1, hy * 5 + 2);
+                    int bx = tr.x + (int)(hs % (unsigned)std::max(1, tr.w - ss));
+                    int by = tr.y + (int)((hs >> 8) % (unsigned)std::max(1, tr.h - ss));
+                    draw::fillRect(ren_, { bx, by, ss, ss }, speck);
                 }
             }
         }
     }
 
-    // Road grid in world space.
+    // Road grid in world space — thick, high-contrast dirt paths.
     const float step = 200.0f;
-    SDL_Color road = scaleColor({72, 86, 70, 255}, b);
+    SDL_Color road = scaleColor({122, 116, 92, 255}, b);
+    int rw = std::max(1, (int)(6.0f * view_.cam.zoom));
     float startX = std::floor(wx0 / step) * step;
     float startY = std::floor(wy0 / step) * step;
     for (float x = startX; x <= wx1; x += step) {
         int sx, sy, sx2, sy2;
         view_.worldToScreen(x, wy0, sx, sy);
         view_.worldToScreen(x, wy1, sx2, sy2);
-        draw::line(ren_, sx, view_.viewY, sx2, view_.viewY + view_.viewH, road);
+        draw::thickLine(ren_, sx, view_.viewY, sx2, view_.viewY + view_.viewH, rw, road);
     }
     for (float y = startY; y <= wy1; y += step) {
         int sx, sy, sx2, sy2;
         view_.worldToScreen(wx0, y, sx, sy);
         view_.worldToScreen(wx1, y, sx2, sy2);
-        draw::line(ren_, view_.viewX, sy, view_.viewX + view_.viewW, sy2, road);
+        draw::thickLine(ren_, view_.viewX, sy, view_.viewX + view_.viewW, sy2, rw, road);
     }
 
-    // World border.
+    // World border (chunky outline).
     SDL_Rect border;
     if (view_.worldRectToScreen(0, 0, settings().worldW, settings().worldH, border))
-        draw::rect(ren_, border, {70, 90, 120, 200});
+        draw::thickRect(ren_, border, 3, {90, 110, 140, 220});
 }
 
 // Park lawns, ponds, and flowers form a ground "decoration" layer drawn after
@@ -703,10 +698,9 @@ void Game::renderParkDecor() {
         if (b.type != BType::Park) continue;
         SDL_Rect r;
         if (!view_.worldRectToScreen(b.pos.x, b.pos.y, b.w, b.h, r)) continue;
-        SDL_Color lawn = scaleColor({64, 122, 64, 255}, (0.9f + 0.04f * b.variant) * bright);
-        draw::roundedRect(ren_, r, std::min(12, r.w / 5), lawn);
-        draw::roundedRectOutline(ren_, r, std::min(12, r.w / 5),
-                                 scaleColor(lawn, 1.18f));
+        SDL_Color lawn = scaleColor({74, 144, 74, 255}, (0.9f + 0.04f * b.variant) * bright);
+        draw::fillRect(ren_, r, lawn);
+        draw::thickRect(ren_, r, 2, scaleColor(lawn, 0.6f));
     }
 
     // --- Ponds, then flowers on top of the lawn. ---
@@ -737,27 +731,26 @@ void Game::renderFlower(const Flower& f) {
     if (sx < view_.viewX - 6 || sx > view_.viewX + view_.viewW + 6 ||
         sy < view_.viewY - 6 || sy > view_.viewY + view_.viewH + 6) return;
     float zoom = view_.cam.zoom;
-    int pr = (int)clampf(f.size * zoom, 1.0f, 10.0f);
+    int pr = (int)clampf(f.size * zoom, 1.0f, 9.0f);
     float bright = dayBrightness();
+    sx = (sx / 2) * 2; sy = (sy / 2) * 2;   // snap to pixel grid
 
-    // Tiny ground shadow.
+    // Tiny blocky ground shadow.
     if (settings().shadows && pr >= 2)
-        draw::fillEllipse(ren_, sx + 1, sy + 1, std::max(1, pr), std::max(1, pr / 2),
-                          {0, 0, 0, (Uint8)(shadowAlpha() * 110)});
+        draw::fillRect(ren_, { sx - pr, sy - 1, pr * 2, std::max(1, pr / 2) },
+                       {0, 0, 0, (Uint8)(shadowAlpha() * 90)});
 
     int stemH = std::max(2, (int)(f.size * 1.4f * zoom));
-    SDL_Color stem = scaleColor({60, 130, 60, 255}, bright);
-    draw::line(ren_, sx, sy, sx, sy - stemH, stem);
+    SDL_Color stem = scaleColor({60, 132, 60, 255}, bright);
+    draw::fillRect(ren_, { sx, sy - stemH, std::max(1, pr / 3), stemH }, stem);
 
     int headY = sy - stemH;
     SDL_Color petal = scaleColor(f.color, bright);
-    if (pr <= 1) { draw::fillCircle(ren_, sx, headY, 1, petal); return; }
-    // Four petals around a center.
-    draw::fillCircle(ren_, sx - pr, headY, pr, petal);
-    draw::fillCircle(ren_, sx + pr, headY, pr, petal);
-    draw::fillCircle(ren_, sx, headY - pr, pr, petal);
-    draw::fillCircle(ren_, sx, headY + pr, pr, petal);
-    draw::fillCircle(ren_, sx, headY, std::max(1, pr), scaleColor({252, 224, 120, 255}, bright));
+    if (pr <= 1) { draw::fillRect(ren_, { sx, headY, 1, 1 }, petal); return; }
+    // Square bloom with a bright center pixel (blocky pixel flower).
+    draw::fillRect(ren_, { sx - pr, headY - pr, pr * 2, pr * 2 }, petal);
+    draw::fillRect(ren_, { sx - pr / 2, headY - pr / 2, std::max(1, pr), std::max(1, pr) },
+                   scaleColor({252, 224, 120, 255}, bright));
 }
 
 void Game::renderGrid() {
@@ -797,83 +790,72 @@ void Game::renderBuilding(const Building& b, Uint8 alpha) {
         draw::fillRect(ren_, sh, {0, 0, 0, (Uint8)(shadowAlpha() * 130)});
     }
 
+    // Bold, saturated base colors for the retro pixel look.
     SDL_Color base;
     switch (b.type) {
-        case BType::Residential:   base = {86, 132, 92, 255};  break;
-        case BType::Office:        base = {120, 134, 168, 255}; break;
-        case BType::Industry:      base = {150, 116, 84, 255};  break;
-        case BType::Park:          base = {54, 120, 64, 255};   break;
-        case BType::PoliceStation: base = {52, 86, 150, 255};   break;
-        case BType::Hospital:      base = {198, 206, 214, 255}; break;
-        default:                   base = {120,120,120,255};    break;
+        case BType::Residential:   base = {78, 168, 96, 255};  break;
+        case BType::Office:        base = {96, 132, 214, 255}; break;
+        case BType::Industry:      base = {196, 132, 66, 255};  break;
+        case BType::Park:          base = {74, 144, 74, 255};   break;
+        case BType::PoliceStation: base = {58, 96, 206, 255};   break;
+        case BType::Hospital:      base = {222, 226, 236, 255}; break;
+        default:                   base = {130,130,130,255};    break;
     }
     base = scaleColor(base, (0.85f + 0.05f * b.variant) * bright);
 
     if (b.type == BType::Park) {
-        // Parks are open lawns; greenery now comes from scattered Tree objects.
-        draw::roundedRect(ren_, r, std::min(10, r.w / 4), A(base));
+        // Parks are open lawns (normally drawn in renderParkDecor).
+        draw::fillRect(ren_, r, A(base));
         return;
     }
 
-    // Body + roof strip.
+    // Body + flat roof bar (a thick darker band across the top, no perspective).
     draw::fillRect(ren_, r, A(base));
-    SDL_Rect roof{ r.x, r.y, r.w, std::max(2, r.h / 8) };
-    draw::fillRect(ren_, roof, A(scaleColor(base, 0.7f)));
+    int roofH = std::max(3, r.h / 6);
+    SDL_Rect roof{ r.x, r.y, r.w, roofH };
+    draw::fillRect(ren_, roof, A(scaleColor(base, 0.55f)));
 
-    // 3D roof cap: a slightly recessed trapezoid above the roof to suggest
-    // depth and a peaked or flat top. The color is darker than the roof.
-    if (r.h > 16) {
-        int capH = std::max(3, r.h / 12);
-        int roofW = std::max(2, r.w / 20);
-        int capTL = r.x + roofW, capTR = r.x + r.w - roofW;
-        int capBL = r.x, capBR = r.x + r.w;
-        int capTop = r.y - capH, capBot = r.y;
-        SDL_Color cap = A(scaleColor(base, 0.55f));
-        draw::fillTrapezoid(ren_, capTL, capTR, capTop, capBL, capBR, capBot, cap);
-        // Edge highlight at roof-to-wall boundary.
-        draw::line(ren_, r.x, r.y, r.x + r.w, r.y, A(scaleColor(base, 0.83f)));
-    }
-
-    // Windows laid out in WORLD space so zoom only changes apparent size, never
-    // the pattern. Each pane's lit/dark state is a deterministic hash.
-    int cols = std::max(1, std::min(8, (int)(b.w / 28.0f)));
-    int rows = std::max(1, std::min(9, (int)(b.h / 28.0f)));
-    SDL_Color litCol = windowColor();
-    SDL_Color wallDk = scaleColor(base, 0.74f);
+    // Chunky window grid: few, large panes with solid lit/dark colors.
+    int cols = std::max(2, std::min(4, (int)(b.w / 60.0f)));
+    int rows = std::max(2, std::min(4, (int)(b.h / 60.0f)));
+    SDL_Color litCol  = windowColor();
+    SDL_Color darkCol = {28, 32, 42, 255};       // solid "lights off" pane
     float cw = b.w / cols, chh = b.h / rows;
-    for (int gy = 1; gy < rows; ++gy) {          // skip top row under the roof
+    for (int gy = 1; gy < rows; ++gy) {          // skip top row under the roof bar
         for (int gx = 0; gx < cols; ++gx) {
-            float wpx = b.pos.x + (gx + 0.22f) * cw;
-            float wpy = b.pos.y + (gy + 0.22f) * chh;
+            float wpx = b.pos.x + (gx + 0.2f) * cw;
+            float wpy = b.pos.y + (gy + 0.2f) * chh;
             SDL_Rect wr;
-            if (!view_.worldRectToScreen(wpx, wpy, cw * 0.56f, chh * 0.56f, wr)) continue;
+            if (!view_.worldRectToScreen(wpx, wpy, cw * 0.6f, chh * 0.6f, wr)) continue;
             if (wr.w < 2 || wr.h < 2) continue;
-            unsigned s = b.windowSeed ^ (unsigned)(gx * 73856093) ^ (unsigned)(gy * 19349663);
-            s = s * 1103515245u + 12345u;
-            bool darkPane = ((s >> 13) & 7) < 2;  // a few panes are just wall
-            draw::fillRect(ren_, wr, A(darkPane ? wallDk : litCol));
+            unsigned s = b.windowSeed ^ hash2i(gx, gy);
+            bool darkPane = ((s >> 13) & 7) < 2;  // a few panes are dark
+            draw::fillRect(ren_, wr, A(darkPane ? darkCol : litCol));
+            if (!darkPane && wr.w >= 4 && wr.h >= 4)  // pixel frame on lit panes
+                draw::rect(ren_, wr, A(scaleColor(litCol, 0.45f)));
         }
     }
 
-    // Type markers.
+    // Blocky type markers.
     if (b.type == BType::Hospital && r.w > 16 && r.h > 16) {
         int cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-        int sz = std::max(3, r.w / 8);
-        draw::fillRect(ren_, {cx - sz / 3, cy - sz, (2 * sz) / 3, 2 * sz}, A({220, 60, 60, 255}));
-        draw::fillRect(ren_, {cx - sz, cy - sz / 3, 2 * sz, (2 * sz) / 3}, A({220, 60, 60, 255}));
+        int sz = std::max(4, r.w / 6);
+        draw::fillRect(ren_, {cx - sz / 3, cy - sz, (2 * sz) / 3, 2 * sz}, A({226, 56, 56, 255}));
+        draw::fillRect(ren_, {cx - sz, cy - sz / 3, 2 * sz, (2 * sz) / 3}, A({226, 56, 56, 255}));
     } else if (b.type == BType::PoliceStation && r.w > 16 && r.h > 16) {
         int cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-        int sz = std::max(3, r.w / 7);
-        draw::fillCircle(ren_, cx, cy, sz, A({235, 215, 90, 255}));
-        draw::fillCircle(ren_, cx, cy, std::max(1, sz - 3), A({52, 86, 150, 255}));
+        int sz = std::max(4, r.w / 6);
+        draw::fillRect(ren_, {cx - sz, cy - sz, 2 * sz, 2 * sz}, A({240, 218, 90, 255}));
+        draw::fillRect(ren_, {cx - sz + 2, cy - sz + 2, 2 * sz - 4, 2 * sz - 4}, A({58, 96, 206, 255}));
     } else if (b.type == BType::Industry && r.w > 16) {
-        SDL_Rect ch{ r.x + (int)(r.w * 0.62f), r.y - std::max(4, r.h / 6),
-                     std::max(3, r.w / 10), std::max(4, r.h / 5) };
-        draw::fillRect(ren_, ch, A(scaleColor({90, 70, 56, 255}, bright)));
+        SDL_Rect ch{ r.x + (int)(r.w * 0.62f), r.y - std::max(5, r.h / 5),
+                     std::max(4, r.w / 9), std::max(5, r.h / 4) };
+        draw::fillRect(ren_, ch, A(scaleColor({86, 66, 52, 255}, bright)));
     }
 
-    // Outline.
-    draw::rect(ren_, r, A(scaleColor(base, 0.5f)));
+    // Hard pixel outline.
+    int ot = (r.w > 40 && r.h > 40) ? 2 : 1;
+    draw::thickRect(ren_, r, ot, A(scaleColor(base, 0.4f)));
 }
 
 void Game::renderTree(const Tree& t) {
@@ -885,55 +867,76 @@ void Game::renderTree(const Tree& t) {
         sy < view_.viewY - 90 || sy > view_.viewY + view_.viewH + 50) return;
     float bright = dayBrightness();
 
-    if (settings().shadows && h > 8)
-        draw::fillCircle(ren_, sx + h / 6, sy, std::max(2, h / 4),
-                         {0, 0, 0, (Uint8)(shadowAlpha() * 130)});
+    // Blocky ground shadow.
+    if (settings().shadows && h > 8) {
+        int shw = std::max(3, h / 2), shh = std::max(2, h / 6);
+        draw::fillRect(ren_, { sx - shw / 2 + h / 8, sy - shh / 2, shw, shh },
+                       {0, 0, 0, (Uint8)(shadowAlpha() * 120)});
+    }
+
+    sx = (sx / 2) * 2; sy = (sy / 2) * 2;        // snap to pixel grid
 
     int trunkH = std::max(2, h / 3);
-    int trunkW = std::max(1, h / 12);
-    SDL_Color trunk = scaleColor({96, 66, 40, 255}, bright);
-    draw::fillRect(ren_, { sx - trunkW / 2, sy - trunkH, std::max(1, trunkW), trunkH }, trunk);
+    int trunkW = std::max(2, h / 8);
+    SDL_Color trunk = scaleColor({110, 72, 42, 255}, bright);
+    draw::fillRect(ren_, { sx - trunkW / 2, sy - trunkH, trunkW, trunkH }, trunk);
 
-    int canopyR  = std::max(2, h / 3);
-    int canopyCy = sy - trunkH - canopyR / 2;
+    int bottom = sy - trunkH;                    // canopy sits on top of trunk
     unsigned s = t.seed;
     auto jitter = [&](int range) { s = s * 1103515245u + 12345u; return (int)((s >> 16) % (2 * range + 1)) - range; };
 
     switch (t.type) {
         case TreeType::Deciduous: {
-            draw::fillCircle(ren_, sx, canopyCy, canopyR, scaleColor({44, 104, 52, 255}, bright));
-            draw::fillCircle(ren_, sx - canopyR / 3, canopyCy - canopyR / 4,
-                             std::max(1, canopyR * 2 / 3), scaleColor({70, 142, 74, 255}, bright));
+            // Three stacked squares forming a chunky leafy blob.
+            SDL_Color leaf  = scaleColor({58, 150, 68, 255}, bright);
+            SDL_Color leaf2 = scaleColor({84, 184, 92, 255}, bright);
+            int cs = std::max(3, h / 3);
+            draw::fillRect(ren_, { sx - cs,       bottom - cs,         cs * 2,     cs }, leaf);
+            draw::fillRect(ren_, { sx - cs * 3/4, bottom - cs * 2 + 1, cs * 3 / 2, cs }, leaf2);
+            draw::fillRect(ren_, { sx - cs / 2,   bottom - cs * 3 + 2, cs,         cs }, leaf);
+            draw::fillRect(ren_, { sx - cs / 2,   bottom - cs * 3 + 2,
+                                   std::max(2, cs / 2), std::max(2, cs / 2) },
+                           scaleColor(leaf2, 1.1f));   // top-left highlight block
             break;
         }
         case TreeType::Pine: {
-            SDL_Color c = scaleColor({34, 92, 58, 255}, bright);
-            int apex = sy - trunkH - canopyR * 2;
-            int totalH = canopyR * 2 + trunkH / 2;
-            draw::fillTriangleUp(ren_, sx, apex, canopyR, (int)(totalH * 0.55f), scaleColor(c, 1.12f));
-            draw::fillTriangleUp(ren_, sx, apex + (int)(totalH * 0.35f),
-                                 (int)(canopyR * 1.1f), (int)(totalH * 0.6f), c);
+            // Stepped pyramid of rectangles (angular and blocky).
+            SDL_Color pc  = scaleColor({40, 120, 66, 255}, bright);
+            SDL_Color pc2 = scaleColor({54, 142, 80, 255}, bright);
+            int tiers = 4;
+            int tierH = std::max(2, h / tiers);
+            int wMax  = std::max(3, h / 2);
+            for (int i = 0; i < tiers; ++i) {
+                int tw = std::max(2, wMax - (wMax * i) / tiers);
+                int ty = bottom - (i + 1) * tierH;
+                draw::fillRect(ren_, { sx - tw / 2, ty, tw, tierH + 1 }, (i & 1) ? pc2 : pc);
+            }
             break;
         }
         case TreeType::Willow: {
-            SDL_Color c  = scaleColor({96, 150, 86, 255}, bright);
-            SDL_Color cd = scaleColor({80, 132, 74, 255}, bright);
-            draw::fillCircle(ren_, sx, canopyCy, canopyR, c);
+            // Top canopy block with hanging vertical strands.
+            SDL_Color wc  = scaleColor({92, 160, 86, 255}, bright);
+            SDL_Color wcd = scaleColor({70, 128, 70, 255}, bright);
+            int cs = std::max(3, h / 3);
+            draw::fillRect(ren_, { sx - cs, bottom - cs * 2, cs * 2, cs }, wc);
             for (int i = -2; i <= 2; ++i) {
-                int dx = i * std::max(1, canopyR / 3);
-                draw::line(ren_, sx + dx, canopyCy, sx + dx + jitter(2),
-                           canopyCy + canopyR + jitter(3), cd);
+                int dx  = i * std::max(2, cs / 2);
+                int len = cs + (i == 0 ? cs / 2 : (std::abs(i) == 1 ? cs / 3 : 0));
+                draw::fillRect(ren_, { sx + dx - std::max(1, cs / 6), bottom - cs,
+                                       std::max(1, cs / 3), len }, wcd);
             }
             break;
         }
         case TreeType::Dead:
         default: {
-            SDL_Color c = scaleColor({120, 96, 78, 255}, bright);
-            int topY = sy - trunkH - canopyR;
-            draw::line(ren_, sx, sy - trunkH, sx, topY, c);
-            for (int i = 0; i < 4; ++i) {
-                int by = topY + (canopyR * i) / 4;
-                int len = std::max(2, canopyR - i * 2);
+            // Bare branches as simple line segments.
+            SDL_Color c = scaleColor({128, 100, 80, 255}, bright);
+            int topY = bottom - std::max(3, h / 2);
+            draw::thickLine(ren_, sx, bottom, sx, topY, std::max(1, trunkW / 2), c);
+            int branches = 4;
+            for (int i = 0; i < branches; ++i) {
+                int by = topY + ((bottom - topY) * i) / branches;
+                int len = std::max(3, (h / 2) - i * 2);
                 draw::line(ren_, sx, by, sx - len / 2 + jitter(2), by - len / 2, c);
                 draw::line(ren_, sx, by, sx + len / 2 + jitter(2), by - len / 2, c);
             }
@@ -952,37 +955,44 @@ void Game::renderAgent(const Agent& a) {
     float zoom = view_.cam.zoom;
     int rad = (int)clampf(zoom * 4.5f, 2.0f, 16.0f);
     SDL_Color col = roleColor(a.role);
+    sx = (sx / 2) * 2; sy = (sy / 2) * 2;        // snap to 2px grid
 
-    // Far zoom: cheap points.
+    // Far zoom: cheap blocky dot.
     if (rad <= 2) {
         SDL_Rect p{ sx - 1, sy - 1, 3, 3 };
         draw::fillRect(ren_, p, col);
-        if (a.id == selectedId_) draw::rect(ren_, {sx - 3, sy - 3, 6, 6}, {255, 255, 0, 255});
+        if (a.id == selectedId_) draw::thickRect(ren_, {sx - 3, sy - 3, 6, 6}, 1, {255, 255, 0, 255});
         return;
     }
 
-    // Walk bob.
-    int bob = 0;
-    if (settings().animations && (a.act == Act::Walk || a.act == Act::Flee))
-        bob = (int)(std::sin(a.animPhase) * (rad * 0.25f));
+    // Figure metrics (a little blocky person).
+    int bw = std::max(3, rad);                   // body width
+    int bh = std::max(3, (int)(rad * 1.1f));     // body height
+    int hs = std::max(2, rad / 2);               // head square
+    int legH = std::max(1, rad / 3);
+    int totalH = hs + bh + legH;
+    int top = sy - totalH / 2;
+    int legY = top + hs + bh;
 
-    int cy = sy - bob;
+    // Two-frame leg shuffle instead of a smooth bob.
+    bool walking = settings().animations && (a.act == Act::Walk || a.act == Act::Flee);
+    int frame = walking ? (((int)(a.animPhase * 3.0f)) & 1) : -1;
 
-    // Ground shadow beneath agent.
+    // Blocky ground shadow.
     if (settings().shadows && rad >= 3) {
-        int shRx = (int)(rad * 0.7f), shRy = std::max(1, rad / 3);
-        draw::fillEllipse(ren_, sx + 2, sy + 3, shRx, shRy,
-                          {0, 0, 0, (Uint8)(shadowAlpha() * 90)});
+        int shw = std::max(3, bw), shh = std::max(1, rad / 3);
+        draw::fillRect(ren_, { sx - shw / 2 + 1, sy + totalH / 2 - shh, shw, shh },
+                       {0, 0, 0, (Uint8)(shadowAlpha() * 90)});
     }
 
-    // Selection ring (pulsing).
+    // Selection bracket (square, pulsing).
     if (a.id == selectedId_) {
-        float pulse = 1.0f + 0.2f * std::sin(menuAnim_ * 6.0f);
-        draw::circleOutline(ren_, sx, cy, (int)(rad * 1.9f * pulse), {255, 255, 0, 255});
-        draw::circleOutline(ren_, sx, cy, (int)(rad * 1.9f * pulse) + 1, {255, 255, 0, 160});
+        int p = (std::sin(menuAnim_ * 6.0f) > 0) ? 1 : 0;
+        draw::thickRect(ren_, { sx - bw / 2 - 3 - p, top - 3 - p,
+                                bw + 6 + p * 2, totalH + 6 + p * 2 }, 2, {255, 255, 0, 255});
     }
 
-    // Action flash ring.
+    // Action flash: blocky expanding square.
     if (a.actFlash > 0.0f) {
         SDL_Color fc;
         switch (a.act) {
@@ -993,20 +1003,32 @@ void Game::renderAgent(const Agent& a) {
             default:          fc = {255, 255, 255, 255}; break;
         }
         fc.a = (Uint8)(a.actFlash * 200);
-        draw::circleOutline(ren_, sx, cy, (int)(rad * (1.6f + (1.0f - a.actFlash))), fc);
+        int g = (int)(rad * (1.0f + (1.0f - a.actFlash) * 1.6f));
+        draw::thickRect(ren_, { sx - g, sy - g, g * 2, g * 2 }, 1, fc);
     }
 
-    // Body + outline + facing highlight.
-    draw::fillCircle(ren_, sx, cy, rad, col);
-    draw::circleOutline(ren_, sx, cy, rad, scaleColor(col, 0.5f));
-    if (rad >= 4) {
-        int hx = sx + (int)(a.facing * rad * 0.4f);
-        draw::fillCircle(ren_, hx, cy - rad / 4, std::max(1, rad / 3), scaleColor(col, 1.4f));
-    }
+    // Legs (alternate which foot steps forward/down).
+    SDL_Color legc = scaleColor(col, 0.55f);
+    int legW = std::max(1, bw / 3);
+    int lA = legH, lB = legH;
+    if (frame == 0) lA = legH + 1; else if (frame == 1) lB = legH + 1;
+    draw::fillRect(ren_, { sx - bw / 2,        legY, legW, lA }, legc);
+    draw::fillRect(ren_, { sx + bw / 2 - legW, legY, legW, lB }, legc);
 
-    // Stress indicator (small bar above) when zoomed in.
+    // Body.
+    SDL_Rect body{ sx - bw / 2, top + hs, bw, bh };
+    draw::fillRect(ren_, body, col);
+    draw::rect(ren_, body, scaleColor(col, 0.5f));
+
+    // Head (lighter, shifted slightly by facing).
+    int hx = sx - hs / 2 + (a.facing > 0 ? 1 : -1);
+    SDL_Rect head{ hx, top, hs, hs };
+    draw::fillRect(ren_, head, scaleColor(col, 1.25f));
+    draw::rect(ren_, head, scaleColor(col, 0.55f));
+
+    // Stress indicator bar above the head when zoomed in.
     if (rad >= 6 && a.stress > 0.5f) {
-        SDL_Rect bar{ sx - rad, cy - rad - 5, (int)(rad * 2 * a.stress), 2 };
+        SDL_Rect bar{ sx - bw / 2, top - 4, (int)(bw * a.stress), 2 };
         draw::fillRect(ren_, bar, {240, 80, 60, 220});
     }
 }
@@ -1019,7 +1041,8 @@ void Game::renderParticles() {
         float t = clampf(p.life / p.maxLife, 0.0f, 1.0f);
         SDL_Color c = p.color;
         c.a = (Uint8)(c.a * t);
-        int s = std::max(1, (int)(p.size * view_.cam.zoom));
+        int s = std::max(2, (int)(p.size * view_.cam.zoom));  // chunky pixel blocks
+        sx = (sx / 2) * 2; sy = (sy / 2) * 2;
         SDL_Rect rc{ sx - s / 2, sy - s / 2, s, s };
         draw::fillRect(ren_, rc, c);
     }
@@ -1059,16 +1082,17 @@ void Game::renderHUD() {
     font::draw(ren_, mode_ == GameMode::Sandbox ? "SANDBOX MODE" : "LOGOS ENGINE", 14, 32, 1,
                mode_ == GameMode::Sandbox ? SDL_Color{120, 220, 160, 255} : ui::textDim());
 
-    // Role chips.
-    int x = 236;
+    // Role chips (compact so they never collide with the right-side readout).
+    int x = 226;
     const char* labels[] = {"CIV", "CRIM", "POL", "GANG", "HEAL"};
     for (int i = 0; i < (int)Role::COUNT; ++i) {
         SDL_Color c = roleColor((Role)i);
-        draw::fillCircle(ren_, x + 6, HUD_H / 2, 6, c);
+        draw::fillRect(ren_, {x, HUD_H / 2 - 5, 10, 10}, c);
+        draw::rect(ren_, {x, HUD_H / 2 - 5, 10, 10}, scaleColor(c, 0.5f));
         char buf[32];
         std::snprintf(buf, sizeof(buf), "%s %d", labels[i], world_.stats.count[i]);
-        font::draw(ren_, buf, x + 18, HUD_H / 2 - 6, 2, ui::textMain());
-        x += 24 + font::textWidth(buf, 2) + 16;
+        font::draw(ren_, buf, x + 14, HUD_H / 2 - 3, 1, ui::textMain());
+        x += 14 + font::textWidth(buf, 1) + 12;
     }
 
     // Right side: clock, day phase, fps, speed, entity count.
@@ -1085,12 +1109,17 @@ void Game::renderHUD() {
     if (s.dayNight) {
         float hf = world_.hourOfDay();
         int hh = (int)hf, mm = (int)((hf - hh) * 60.0f) % 60;
-        std::snprintf(rbuf, sizeof(rbuf), "%02d:%02d %s   ENTITIES %d   FPS %d   SPEED %.1fX",
-                      hh, mm, phase, visibleCount, (int)fps_, simSpeed_);
+        std::snprintf(rbuf, sizeof(rbuf), "%02d:%02d %s   FPS %d   SPEED %.1fX",
+                      hh, mm, phase, (int)fps_, simSpeed_);
     } else {
-        std::snprintf(rbuf, sizeof(rbuf), "%s   ENTITIES %d   FPS %d   SPEED %.1fX", phase, visibleCount, (int)fps_, simSpeed_);
+        std::snprintf(rbuf, sizeof(rbuf), "%s   FPS %d   SPEED %.1fX", phase, (int)fps_, simSpeed_);
     }
+    int rw = font::textWidth(rbuf, 2);
     font::draw(ren_, rbuf, s.screenW - 12, HUD_H / 2 - 6, 2, ui::textDim(), Align::Right);
+    // On-screen entity count in accent so it stands out.
+    char ebuf[32];
+    std::snprintf(ebuf, sizeof(ebuf), "ON-SCREEN %d", visibleCount);
+    font::draw(ren_, ebuf, s.screenW - 12 - rw - 18, HUD_H / 2 - 6, 2, ui::accent(), Align::Right);
 }
 
 // =====================================================================
@@ -1228,7 +1257,8 @@ void Game::renderInfoPanel(const SDL_Rect& area) {
     }
     Agent& a = world_.agents[selectedId_];
     SDL_Color rc = roleColor(a.role);
-    draw::fillCircle(ren_, x + 8, y + 8, 8, a.alive ? rc : SDL_Color{90, 90, 90, 255});
+    draw::fillRect(ren_, {x, y, 16, 16}, a.alive ? rc : SDL_Color{90, 90, 90, 255});
+    draw::rect(ren_, {x, y, 16, 16}, scaleColor(a.alive ? rc : SDL_Color{90, 90, 90, 255}, 0.5f));
     char hdr[48]; std::snprintf(hdr, sizeof(hdr), "%s #%d", roleName(a.role), a.id);
     font::draw(ren_, hdr, x + 24, y + 2, 2, ui::textMain());
     if (!a.alive) { font::draw(ren_, "STATUS: DECEASED", x, y + 24, 1, {220, 90, 90, 255}); return; }
@@ -1428,7 +1458,7 @@ void Game::renderPause() {
 void Game::renderSettingsScreen() {
     dimScreen(180);
     auto& s = settings();
-    int pw = 440, ph = 470;
+    int pw = 440, ph = 570;
     SDL_Rect box{ s.screenW / 2 - pw / 2, s.screenH / 2 - ph / 2, pw, ph };
     ui::panel(ren_, box);
     int x = box.x + 24, y = box.y + 20, w = pw - 48;

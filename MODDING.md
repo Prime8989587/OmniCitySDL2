@@ -53,32 +53,57 @@ To add **a new role**:
 - `World::generateParkDecor()` populates every park zone with a water body and
   flower clusters. Results are stored in `world.waters` and `world.flowers`.
 - **Water bodies** (`struct Water`): One per park, placed deterministically using
-  seeded RNG. Rendered as ellipses with gradient (darker center, sandy shoreline,
-  light highlight). Shimmer animation syncs to `world_.dayTime` for subtle wave
-  motion. Disable with the `water` config toggle.
+  seeded RNG. Rendered as a single solid blue ellipse (`Game::renderWater`) that
+  scales with day/night brightness — no gradient, shoreline, or shimmer. Disable
+  with the `water` config toggle.
 - **Flowers** (`struct Flower`): 10–20 clusters per park. Each cluster has 3–5
-  flowers in varied colors (red, yellow, purple, white, pink). Simple stem+petal
-  shapes. Disable with the `flowers` config toggle.
+  flowers in varied colors (red, yellow, purple, white, pink). Blocky pixel
+  stem+square-bloom shapes. Disable with the `flowers` config toggle.
 - Both are non-solid (agents pass through) and respond to day/night brightness.
   Both render *before* the depth-sorted entities so agents always appear in front.
 
-## Building 3D roofs — `src/Game.cpp`
+## Pixel-art rendering — all of `src/Game.cpp`, `src/UI.cpp`, `src/Render.cpp`
 
-- `renderBuilding()` now draws a trapezoid "ceiling" cap above the main roof.
-  The cap is ~55% the brightness of the base color and narrower at the top
-  (perspective effect). The cap height scales with building height (`r.h / 12`).
-- The edge between the roof and wall is highlighted with a lighter line for
-  clarity. Disable with the `shadows` toggle (they share the same toggle for now).
+The world is drawn in a cohesive retro pixel-art style — blocky shapes, hard
+edges, and bold, saturated colors instead of smooth curves and gradients.
+
+- **`draw::thickRect()`** (`src/Render.cpp`) draws an N-pixel-thick rectangle
+  outline; it is the workhorse for chunky borders (buildings, UI panels, agent
+  selection brackets).
+- **Agents** (`renderAgent`): a little blocky figure — head square + body rect +
+  two legs — snapped to a 2-pixel grid. Walking uses a 2-frame leg shuffle
+  (no smooth sine bob). The selection bracket and action flash are square
+  outlines (`thickRect`), not circles.
+- **Buildings** (`renderBuilding`): bold base colors, a flat thick roof bar
+  (no perspective), a chunky 2–4 × 2–4 window grid with solid lit/dark panes,
+  and blocky type markers (square police badge, fat hospital cross). The outline
+  is a hard 1–2 px `thickRect`.
+- **Trees** (`renderTree`): iconic blocky silhouettes — deciduous = stacked
+  squares, pine = stepped pyramid of rectangles, willow = canopy block with
+  hanging strands, dead = bare line branches.
+- **UI** (`src/UI.cpp`): panels/buttons/toggles use `fillRect` + `thickRect`
+  (square corners); the slider knob is a small square block.
+- Snapping to a 2-pixel grid is done per element (`sx = (sx/2)*2`) rather than
+  with a global low-res render target, so the bitmap font and HUD stay crisp.
 
 ## Ground textures & grass — `src/Game.cpp` & `src/Math.h`
 
-- `renderGround()` now tiles the visible world into 24-unit cells in **world space**.
-  Each cell gets a pseudo-random brightness offset (±8%) derived from a stable
-  spatial hash (`hashf()` in `Math.h`). The hash is deterministic so the pattern
-  never shifts when panning or zooming.
-- Subtle blade strokes appear on grass when zoomed in enough (`tr.w >= 12`).
-- Disable procedural grass with the `grass` config toggle; falls back to a flat
-  lawn color.
+- `renderGround()` tiles the visible world into 22-unit cells in **world space**
+  and paints a two-tone green **checkerboard** (`(hx+hy)&1`) with occasional
+  darker stipple specks. The pattern comes from a stable spatial hash
+  (`hash2i()`/`hashf()` in `Math.h`) so it never shifts when panning or zooming.
+- Roads are thick dirt-colored paths (`draw::thickLine`); the world border is a
+  3 px `thickRect`.
+- Disable the procedural grass checker with the `grass` config toggle; it falls
+  back to a flat lawn color.
+
+## HUD entity counter — `src/Game.cpp`
+
+- `Game::countVisibleEntities()` returns how many awake, on-screen agents are in
+  the current camera view (reuses the same cull bounds as `renderAgent`).
+- `renderHUD()` shows it as **ON-SCREEN N** in the accent colour, left of the
+  clock/FPS/speed readout. The role-count chips are compact (scale-1) so they
+  never collide with it even at 4-digit populations.
 
 ## Shadows — `src/Game.cpp`
 

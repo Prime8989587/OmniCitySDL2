@@ -19,10 +19,10 @@ game ships as a single small executable plus `SDL2.dll`.
 
 - **Modular C++17 codebase** — config, math, font, rendering, simulation, UI,
   audio, and game-state are cleanly separated.
-- **Procedural graphics** — buildings with roofs, time-of-day lit windows,
-  shadows, four procedural tree types (deciduous, pine, willow, dead), factory
-  chimneys with rising smoke, hospital/police markers, a road grid, and a
-  day/night cycle.
+- **Retro pixel-art graphics** — a cohesive blocky aesthetic: chunky buildings
+  with flat roofs and big lit windows, little pixel-figure citizens, blocky trees
+  (deciduous, pine, willow, dead), a checkerboard grass ground, dirt roads, park
+  ponds and flower patches, cast shadows, factory smoke, and a day/night cycle.
 - **Depth-sorted world** — buildings, trees, and agents are painted back-to-front
   by base Y, and a building turns semi-transparent (x-ray) when an agent walks
   behind it. Zoom no longer disturbs the window pattern.
@@ -36,8 +36,9 @@ game ships as a single small executable plus `SDL2.dll`.
   sleep at night; Criminals hunt and rob; Police chase and arrest; Gangs fight
   police; Healers calm and heal. A spatial grid keeps neighbor queries fast.
 - **Built-in UI toolkit** — buttons, toggles, sliders, panels, a top HUD with
-  live role counts and a clock, a selected-agent info/edit panel, a minimap with
-  a live camera viewport box, and a scrolling event log.
+  live role counts, a clock, and an on-screen entity counter, a selected-agent
+  info/edit panel, a minimap with a live camera viewport box, and a scrolling
+  event log.
 - **Two modes** — a timed **Survival** challenge (earn bounties for arrests and
   heals, then beat the clock for a high score) and a **Sandbox** with unlimited
   budget, free entity spawners, and live agent-stat editing.

@@ -46,6 +46,15 @@ void rect(SDL_Renderer* r, const SDL_Rect& rc, SDL_Color c) {
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
     SDL_RenderDrawRect(r, &rc);
 }
+void thickRect(SDL_Renderer* r, SDL_Rect rc, int t, SDL_Color c) {
+    SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+    if (t < 1) t = 1;
+    for (int i = 0; i < t; ++i) {
+        SDL_Rect e{ rc.x + i, rc.y + i, rc.w - 2 * i, rc.h - 2 * i };
+        if (e.w <= 0 || e.h <= 0) break;
+        SDL_RenderDrawRect(r, &e);
+    }
+}
 void line(SDL_Renderer* r, int x1, int y1, int x2, int y2, SDL_Color c) {
     SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
     SDL_RenderDrawLine(r, x1, y1, x2, y2);

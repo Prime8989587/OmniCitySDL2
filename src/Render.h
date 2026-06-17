@@ -31,6 +31,7 @@ namespace draw {
 
 void fillRect(SDL_Renderer* r, const SDL_Rect& rc, SDL_Color c);
 void rect(SDL_Renderer* r, const SDL_Rect& rc, SDL_Color c);       // outline
+void thickRect(SDL_Renderer* r, SDL_Rect rc, int t, SDL_Color c);  // outline, t px thick
 void roundedRect(SDL_Renderer* r, SDL_Rect rc, int radius, SDL_Color c);
 void roundedRectOutline(SDL_Renderer* r, SDL_Rect rc, int radius, SDL_Color c);
 void fillCircle(SDL_Renderer* r, int cx, int cy, int radius, SDL_Color c);
