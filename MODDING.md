@@ -48,6 +48,50 @@ To add **a new role**:
 - Placement: `World::generateTrees()` (count from `numTrees` in the config).
 - Appearance: `Game::renderTree()` (`src/Game.cpp`).
 
+## Park decoration — ponds & flowers — `src/Sim.cpp` & `src/Game.cpp`
+
+- `World::generateParkDecor()` populates every park zone with a water body and
+  flower clusters. Results are stored in `world.waters` and `world.flowers`.
+- **Water bodies** (`struct Water`): One per park, placed deterministically using
+  seeded RNG. Rendered as ellipses with gradient (darker center, sandy shoreline,
+  light highlight). Shimmer animation syncs to `world_.dayTime` for subtle wave
+  motion. Disable with the `water` config toggle.
+- **Flowers** (`struct Flower`): 10–20 clusters per park. Each cluster has 3–5
+  flowers in varied colors (red, yellow, purple, white, pink). Simple stem+petal
+  shapes. Disable with the `flowers` config toggle.
+- Both are non-solid (agents pass through) and respond to day/night brightness.
+  Both render *before* the depth-sorted entities so agents always appear in front.
+
+## Building 3D roofs — `src/Game.cpp`
+
+- `renderBuilding()` now draws a trapezoid "ceiling" cap above the main roof.
+  The cap is ~55% the brightness of the base color and narrower at the top
+  (perspective effect). The cap height scales with building height (`r.h / 12`).
+- The edge between the roof and wall is highlighted with a lighter line for
+  clarity. Disable with the `shadows` toggle (they share the same toggle for now).
+
+## Ground textures & grass — `src/Game.cpp` & `src/Math.h`
+
+- `renderGround()` now tiles the visible world into 24-unit cells in **world space**.
+  Each cell gets a pseudo-random brightness offset (±8%) derived from a stable
+  spatial hash (`hashf()` in `Math.h`). The hash is deterministic so the pattern
+  never shifts when panning or zooming.
+- Subtle blade strokes appear on grass when zoomed in enough (`tr.w >= 12`).
+- Disable procedural grass with the `grass` config toggle; falls back to a flat
+  lawn color.
+
+## Shadows — `src/Game.cpp`
+
+- All shadows now use `Game::shadowAlpha()`, a brightness-responsive helper that
+  returns ~0 at night and ~0.4 at midday (scales with `dayBrightness()`).
+- **Building shadows**: Offset down-right by ~10% of building height, ~80% of
+  building footprint. Always cast beneath the building (painter's algorithm).
+- **Agent shadows**: Small ground ellipse (~70% agent width × ~33% agent height),
+  offset down-right by 2–3 pixels, always beneath the agent's feet.
+- **Tree shadows**: Ellipse beneath trunk, ~60% of tree canopy width.
+- All shadows are drawn *before* the entity they belong to, so entities always
+  render on top. Disable all shadows with the `shadows` config toggle.
+
 ## Day/night & sleep — `src/Sim.cpp` & `src/Game.cpp`
 
 - `World::hourOfDay()` returns 0–24 (noon == brightest). Civilians head home and
@@ -55,6 +99,9 @@ To add **a new role**:
   those thresholds to retime the city.
 - `Game::windowColor()` maps the hour to the lit-window tint (night blue → midday
   white-yellow → dusk orange).
+- `Game::dayBrightness()` returns a 0–1 brightness factor used to scale all colors
+  and shadow alphas. Day/night brightness applies uniformly to grass, water,
+  flowers, shadows, and all other visual elements.
 
 ## Colors & theme — `src/UI.h`
 
