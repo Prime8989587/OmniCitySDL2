@@ -1,0 +1,20 @@
+# Build output
+/build/
+/dist/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Runtime artifacts (only the one written next to the executable at the repo root)
+/cristiverse.cfg
+*.bmp
+*.png
+!docs/*.png
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
