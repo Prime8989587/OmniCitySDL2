@@ -2,7 +2,7 @@
 #pragma once
 #include <vector>
 #include <string>
-#include <SDL2/SDL.h>
+#include <SDL.h>
 #include "Math.h"
 
 namespace cv {

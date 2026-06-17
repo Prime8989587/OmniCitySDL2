@@ -5,7 +5,7 @@
 #include <chrono>
 #include <algorithm>
 #include <cstdint>
-#include <SDL2/SDL.h>
+#include <SDL.h>
 
 namespace cv {
 

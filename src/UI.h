@@ -1,6 +1,6 @@
 // UI.h — lightweight immediate-mode widgets built on the draw + font modules.
 #pragma once
-#include <SDL2/SDL.h>
+#include <SDL.h>
 #include <string>
 #include "Math.h"
 

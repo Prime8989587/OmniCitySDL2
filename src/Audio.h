@@ -1,7 +1,7 @@
 // Audio.h — tiny procedural sound engine (synthesized tones, no asset files).
 // Fails gracefully when no audio device is available (e.g. headless).
 #pragma once
-#include <SDL2/SDL.h>
+#include <SDL.h>
 
 namespace cv {
 

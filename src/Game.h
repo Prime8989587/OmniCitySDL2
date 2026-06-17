@@ -1,6 +1,6 @@
 // Game.h — top-level application: window, state machine, input, rendering.
 #pragma once
-#include <SDL2/SDL.h>
+#include <SDL.h>
 #include <string>
 #include "Sim.h"
 #include "Render.h"

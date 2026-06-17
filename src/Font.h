@@ -2,7 +2,7 @@
 // Renders crisp scaled text using filled rectangles. All-caps glyph set;
 // lowercase letters are mapped to uppercase glyphs.
 #pragma once
-#include <SDL2/SDL.h>
+#include <SDL.h>
 #include <string>
 
 namespace cv {

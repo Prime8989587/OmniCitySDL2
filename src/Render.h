@@ -1,6 +1,6 @@
 // Render.h — camera, world<->screen transforms, and low-level draw primitives.
 #pragma once
-#include <SDL2/SDL.h>
+#include <SDL.h>
 #include "Math.h"
 
 namespace cv {
