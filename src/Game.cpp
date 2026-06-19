@@ -1074,19 +1074,29 @@ void Game::renderBuilding(const Building& b, Uint8 alpha) {
     auto A = [&](SDL_Color c) { c.a = (Uint8)((int)c.a * alpha / 255); return c; };
 
     // ---- Sprite path: draw the player's PNG/BMP building art. -------------
-    // The source sprites are square (48x48); we scale them to the footprint
-    // width to preserve their 1:1 aspect (no stretching) and anchor them to the
-    // footprint's bottom edge so each building "rises" from its plot. Depth
-    // sorting by footprint-bottom keeps the layering correct.
+    // Every building sprite is drawn at ONE fixed world-space size so all
+    // buildings share an identical on-screen scale regardless of their plot
+    // footprint (b.w/b.h vary 90..240 and must NOT change the art size — that
+    // was the old bug where `side = r.w` made each building a different size).
+    //
+    // The size is derived, not eyeballed: the sprites are square with a door
+    // ~3.5/32 (≈10.9%) of their height, and an agent figure is ~8.7 world units
+    // tall. 80 world units is the smallest size at which the door is at least as
+    // tall as an agent (0.109 * 80 ≈ 8.7), so the human:door:building
+    // proportions stay realistic at every zoom. Only the footprint's horizontal
+    // centre and bottom edge are read from the plot, so each building still
+    // "rises" from its plot and depth-sorts by its base.
     if (SDL_Texture* tex = buildingTexture(b)) {
-        int side = std::max(2, r.w);
-        SDL_Rect dst{ r.x, r.y + r.h - side, side, side };
+        static constexpr float kBuildingSpriteWorld = 80.0f;   // world units, all buildings
+        float zoom = view_.cam.zoom;
+        int side = std::max(2, (int)std::lround(kBuildingSpriteWorld * zoom));
+        int cx   = r.x + r.w / 2;                              // footprint centre (screen)
+        SDL_Rect dst{ cx - side / 2, r.y + r.h - side, side, side };
 
         if (settings().shadows) {
-            float zoom = view_.cam.zoom;
             int off = (int)clampf(b.h * 0.08f * zoom, 3.0f, 24.0f);
             int shh = std::max(2, side / 6);
-            SDL_Rect sh{ r.x + off, r.y + r.h - shh + off / 2, side, shh };
+            SDL_Rect sh{ dst.x + off, r.y + r.h - shh + off / 2, side, shh };
             draw::fillRect(ren_, sh, {0, 0, 0, (Uint8)(shadowAlpha() * 110)});
         }
 
