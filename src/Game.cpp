@@ -508,6 +508,12 @@ void Game::startSandbox() {
 }
 
 void Game::deployAt(int sx, int sy) {
+    // Build tools place a structure instead of an agent.
+    if (tool_ == Tool::BuildResidential || tool_ == Tool::BuildOffice ||
+        tool_ == Tool::BuildIndustry    || tool_ == Tool::BuildPark) {
+        placeBuildingAt(sx, sy);
+        return;
+    }
     Role  role; float cost;
     switch (tool_) {
         case Tool::Police:        role = Role::Police;   cost = 100.0f; break;
@@ -540,6 +546,57 @@ void Game::deployAt(int sx, int sy) {
     const char* verb = (mode_ == GameMode::Sandbox) ? "Spawned " : "Deployed ";
     world_.addLog(std::string(verb) + roleName(role) + ".", roleColor(role));
     toast(std::string(verb) + roleName(role));
+}
+
+// Custom building placement: drop a player-chosen structure at the clicked
+// world point. Survival mode charges budget; sandbox is free. New structures
+// can't overlap the solid footprint of an existing building (parks excepted,
+// since they're walkable).
+void Game::placeBuildingAt(int sx, int sy) {
+    auto& s = settings();
+    BType type; float cost;
+    switch (tool_) {
+        case Tool::BuildResidential: type = BType::Residential; cost = 50.0f;  break;
+        case Tool::BuildOffice:      type = BType::Office;      cost = 80.0f;  break;
+        case Tool::BuildIndustry:    type = BType::Industry;    cost = 100.0f; break;
+        case Tool::BuildPark:        type = BType::Park;        cost = 30.0f;  break;
+        default: return;
+    }
+    if (mode_ == GameMode::Sandbox) cost = 0.0f;
+    if (mode_ == GameMode::Survival && budget_ < cost) {
+        toast("Not enough budget!"); audio_.alarm(); return;
+    }
+
+    float wx, wy; view_.screenToWorld(sx, sy, wx, wy);
+    float bw = frand(96.0f, 150.0f);
+    float bh = frand(96.0f, 150.0f);
+    float px = clampf(wx - bw * 0.5f, 8.0f, s.worldW - bw - 8.0f);
+    float py = clampf(wy - bh * 0.5f, 8.0f, s.worldH - bh - 8.0f);
+
+    // Reject overlap with the solid (lower) part of any other solid building.
+    if (type != BType::Park) {
+        float nSolidTop = py + bh * (1.0f - kBuildingSolidFrac);
+        for (const auto& ob : world_.buildings) {
+            if (ob.type == BType::Park) continue;
+            float oSolidTop = ob.pos.y + ob.h * (1.0f - kBuildingSolidFrac);
+            bool overlap = px < ob.pos.x + ob.w && px + bw > ob.pos.x &&
+                           nSolidTop < ob.pos.y + ob.h && py + bh > oSolidTop;
+            if (overlap) { toast("Too close to another building!"); audio_.alarm(); return; }
+        }
+    }
+
+    Building b;
+    b.pos = { px, py };
+    b.w = bw; b.h = bh;
+    b.type = type;
+    b.variant = irand(0, 3);
+    b.windowSeed = (unsigned)irand(1, 1 << 30);
+    world_.buildings.push_back(b);
+    budget_ -= cost;
+    audio_.deploy();
+    world_.spawnBurst({ wx, wy }, {200, 210, 225, 255}, 14, 70.0f);
+    world_.addLog(std::string("Built ") + btypeName(type) + ".", {200, 220, 255, 255});
+    toast(std::string("Built ") + btypeName(type));
 }
 
 void Game::layoutView() {
@@ -1603,6 +1660,27 @@ void Game::renderSidebar() {
         }
         y += 36;
     }
+
+    // --- Build tools (place buildings; free in sandbox, costs budget in survival) ---
+    font::draw(ren_, sandbox ? "BUILD (CLICK MAP)" : "BUILD (COSTS BUDGET)", x, y, 1, ui::textDim());
+    y += 14;
+    struct BT { const char* label; Tool tool; SDL_Color col; };
+    BT brow[] = {
+        {"HOUSE",  Tool::BuildResidential, {150, 195, 140, 255}},
+        {"OFFICE", Tool::BuildOffice,      {130, 170, 215, 255}},
+        {"FACTORY",Tool::BuildIndustry,    {205, 160, 120, 255}},
+        {"PARK",   Tool::BuildPark,        {110, 205, 130, 255}},
+    };
+    int bw4 = (w - 12) / 4;
+    for (int i = 0; i < 4; ++i) {
+        SDL_Rect bb{ x + i * (bw4 + 4), y, bw4, 28 };
+        SDL_Color ac = (tool_ == brow[i].tool) ? SDL_Color{255, 255, 160, 255} : brow[i].col;
+        if (ui::button(ren_, bb, brow[i].label, in_, ac, 1)) {
+            tool_ = (tool_ == brow[i].tool) ? Tool::None : brow[i].tool; audio_.click();
+        }
+    }
+    y += 32;
+
     if (tool_ != Tool::None) {
         font::draw(ren_, "TAB = CANCEL TOOL", x, y, 1, ui::accent());
     }
@@ -1850,41 +1928,75 @@ void Game::renderPause() {
 void Game::renderSettingsScreen() {
     dimScreen(180);
     auto& s = settings();
-    int pw = 440, ph = 624;
+    int pw = 680, ph = 540;
     SDL_Rect box{ s.screenW / 2 - pw / 2, s.screenH / 2 - ph / 2, pw, ph };
     ui::panel(ren_, box);
-    int x = box.x + 24, y = box.y + 20, w = pw - 48;
-    font::draw(ren_, "SETTINGS", box.x + pw / 2, y, 4, ui::accent(), Align::Center);
-    y += 44;
+    font::draw(ren_, "SETTINGS", box.x + pw / 2, box.y + 18, 4, ui::accent(), Align::Center);
 
-    int th = 30, gap = 10;
+    int cy0 = box.y + 62;
+    int colW = (pw - 72) / 2;                 // 24 margins + 24 gutter
+    int lx = box.x + 24;
+    int rx = box.x + 24 + colW + 24;
+
+    // ---------------- Left column: quality toggles + volume ----------------
+    int ly = cy0, th = 30, step = 38;
     bool b;
-    b = s.animations; if (ui::toggle(ren_, {x, y, w, th}, "ANIMATIONS", b, in_)) { s.animations = b; audio_.click(); } y += th + gap;
-    b = s.shadows;    if (ui::toggle(ren_, {x, y, w, th}, "SHADOWS", b, in_))    { s.shadows = b; audio_.click(); } y += th + gap;
-    b = s.dayNight;   if (ui::toggle(ren_, {x, y, w, th}, "DAY/NIGHT", b, in_))  { s.dayNight = b; audio_.click(); } y += th + gap;
-    b = s.particles;  if (ui::toggle(ren_, {x, y, w, th}, "PARTICLES", b, in_))  { s.particles = b; audio_.click(); } y += th + gap;
-    b = s.grass;      if (ui::toggle(ren_, {x, y, w, th}, "GRASS TEXTURE", b, in_)) { s.grass = b; audio_.click(); } y += th + gap;
-    b = s.water;      if (ui::toggle(ren_, {x, y, w, th}, "WATER", b, in_))      { s.water = b; audio_.click(); } y += th + gap;
-    b = s.flowers;    if (ui::toggle(ren_, {x, y, w, th}, "FLOWERS", b, in_))    { s.flowers = b; audio_.click(); } y += th + gap;
-    b = s.sound;      if (ui::toggle(ren_, {x, y, w, th}, "SOUND", b, in_))      { s.sound = b; audio_.click(); } y += th + gap + 14;
-
+    b = s.animations; if (ui::toggle(ren_, {lx, ly, colW, th}, "ANIMATIONS", b, in_)) { s.animations = b; audio_.click(); } ly += step;
+    b = s.shadows;    if (ui::toggle(ren_, {lx, ly, colW, th}, "SHADOWS", b, in_))    { s.shadows = b; audio_.click(); } ly += step;
+    b = s.dayNight;   if (ui::toggle(ren_, {lx, ly, colW, th}, "DAY/NIGHT", b, in_))  { s.dayNight = b; audio_.click(); } ly += step;
+    b = s.particles;  if (ui::toggle(ren_, {lx, ly, colW, th}, "PARTICLES", b, in_))  { s.particles = b; audio_.click(); } ly += step;
+    b = s.grass;      if (ui::toggle(ren_, {lx, ly, colW, th}, "GRASS", b, in_))      { s.grass = b; audio_.click(); } ly += step;
+    b = s.water;      if (ui::toggle(ren_, {lx, ly, colW, th}, "WATER", b, in_))      { s.water = b; audio_.click(); } ly += step;
+    b = s.flowers;    if (ui::toggle(ren_, {lx, ly, colW, th}, "FLOWERS", b, in_))    { s.flowers = b; audio_.click(); } ly += step;
+    b = s.sound;      if (ui::toggle(ren_, {lx, ly, colW, th}, "SOUND", b, in_))      { s.sound = b; audio_.click(); } ly += step + 14;
     float vol = s.volume;
-    if (ui::sliderF(ren_, {x, y, w, 20}, "VOLUME", vol, 0.0f, 1.0f, in_)) s.volume = vol;
-    y += 40;
-    float ag = (float)s.numAgents;
-    if (ui::sliderF(ren_, {x, y, w, 20}, "AGENTS (APPLY TO REBUILD)", ag, 50.0f, 6000.0f, in_)) s.numAgents = (int)ag;
-    y += 40;
-    float bn = (float)s.numBuildings;
-    if (ui::sliderF(ren_, {x, y, w, 20}, "BUILDINGS (APPLY TO REBUILD)", bn, 8.0f, 160.0f, in_)) s.numBuildings = (int)bn;
-    y += 40;
-    float cd = (float)s.cityDepth;
-    if (ui::sliderF(ren_, {x, y, w, 20}, "CITY DEPTH 1-10 (APPLY TO REBUILD)", cd, 1.0f, 10.0f, in_))
-        s.cityDepth = std::max(1, std::min(10, (int)(cd + 0.5f)));
-    y += 44;
+    if (ui::sliderF(ren_, {lx, ly, colW, 18}, "VOLUME", vol, 0.0f, 1.0f, in_)) s.volume = vol;
 
-    SDL_Rect bApply{ x, y, w / 2 - 6, 36 };
-    SDL_Rect bBack { x + w / 2 + 6, y, w / 2 - 6, 36 };
-    if (ui::button(ren_, bApply, "REBUILD WORLD", in_, {120, 200, 140, 255}, 1)) {
+    // ---------------- Right column: world + building mix ----------------
+    int ry = cy0;
+    font::draw(ren_, "WORLD (APPLY TO REBUILD)", rx, ry, 1, ui::textDim()); ry += 22;
+    float ag = (float)s.numAgents;
+    if (ui::sliderF(ren_, {rx, ry, colW, 18}, "AGENTS", ag, 50.0f, 6000.0f, in_)) s.numAgents = (int)ag;
+    ry += 38;
+    float bn = (float)s.numBuildings;
+    if (ui::sliderF(ren_, {rx, ry, colW, 18}, "BUILDINGS", bn, 8.0f, 160.0f, in_)) s.numBuildings = (int)bn;
+    ry += 38;
+    float cd = (float)s.cityDepth;
+    if (ui::sliderF(ren_, {rx, ry, colW, 18}, "CITY DEPTH 1-10", cd, 1.0f, 10.0f, in_))
+        s.cityDepth = std::max(1, std::min(10, (int)(cd + 0.5f)));
+    ry += 42;
+
+    font::draw(ren_, "BUILDING MIX (APPLY TO REBUILD)", rx, ry, 1, ui::textDim()); ry += 22;
+    float fr = (float)s.buildingResidentialPct;
+    if (ui::sliderF(ren_, {rx, ry, colW, 18}, "RESIDENTIAL", fr, 0.0f, 100.0f, in_))
+        s.buildingResidentialPct = std::max(0, std::min(100, (int)(fr + 0.5f)));
+    ry += 36;
+    float fo = (float)s.buildingOfficePct;
+    if (ui::sliderF(ren_, {rx, ry, colW, 18}, "OFFICE", fo, 0.0f, 100.0f, in_))
+        s.buildingOfficePct = std::max(0, std::min(100, (int)(fo + 0.5f)));
+    ry += 36;
+    float fi = (float)s.buildingIndustryPct;
+    if (ui::sliderF(ren_, {rx, ry, colW, 18}, "INDUSTRY", fi, 0.0f, 100.0f, in_))
+        s.buildingIndustryPct = std::max(0, std::min(100, (int)(fi + 0.5f)));
+    ry += 36;
+    float fp = (float)s.buildingParkPct;
+    if (ui::sliderF(ren_, {rx, ry, colW, 18}, "PARK", fp, 0.0f, 100.0f, in_))
+        s.buildingParkPct = std::max(0, std::min(100, (int)(fp + 0.5f)));
+    ry += 30;
+    // Normalized readout so the player sees the effective mix (weights -> %).
+    int mixSum = std::max(1, s.buildingResidentialPct + s.buildingOfficePct +
+                             s.buildingIndustryPct + s.buildingParkPct);
+    char mixbuf[80];
+    std::snprintf(mixbuf, sizeof(mixbuf), "= HOUSE %d%%  OFFICE %d%%  IND %d%%  PARK %d%%",
+                  s.buildingResidentialPct * 100 / mixSum, s.buildingOfficePct * 100 / mixSum,
+                  s.buildingIndustryPct * 100 / mixSum,    s.buildingParkPct * 100 / mixSum);
+    font::draw(ren_, mixbuf, rx, ry, 1, ui::accent());
+
+    // ---------------- Bottom: apply / save buttons (full width) ----------------
+    int by = box.y + ph - 52, bw = (pw - 60) / 2;
+    SDL_Rect bApply{ box.x + 24, by, bw, 36 };
+    SDL_Rect bBack { box.x + 24 + bw + 12, by, bw, 36 };
+    if (ui::button(ren_, bApply, "REBUILD WORLD", in_, {120, 200, 140, 255}, 2)) {
         audio_.click(); settings().saveToFile(configPath());
         adjustWorldForDepth();
         world_.regenerate();
@@ -1902,7 +2014,7 @@ void Game::renderSettingsScreen() {
 void Game::renderHelp() {
     dimScreen(190);
     auto& s = settings();
-    int pw = 560, ph = 460;
+    int pw = 560, ph = 488;
     SDL_Rect box{ s.screenW / 2 - pw / 2, s.screenH / 2 - ph / 2, pw, ph };
     ui::panel(ren_, box);
     int x = box.x + 26, y = box.y + 20;
@@ -1919,6 +2031,8 @@ void Game::renderHelp() {
         "PLUS STEADY CITY INCOME OVER TIME.",
         "SCORE = ARRESTS*10 + HEALS*5 + TIME.",
         "",
+        "BUILD: PICK HOUSE/OFFICE/FACTORY/PARK,",
+        "THEN CLICK THE MAP TO PLACE A BUILDING.",
         "SANDBOX: UNLIMITED BUDGET, SPAWN ANYONE",
         "(KEYS 3-7), AND EDIT AGENT STATS LIVE.",
         "",

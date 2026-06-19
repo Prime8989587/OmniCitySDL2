@@ -81,6 +81,26 @@ void World::regenerateAgentsOnly() {
     addLog("Population respawned.", {180, 220, 255, 255});
 }
 
+// Weighted pick of a non-civic building type from the configured mix. The four
+// settings are treated as weights (normalized here), so the relative ratios are
+// what matter — the sliders never need to sum to exactly 100.
+static BType pickWeightedType() {
+    const auto& s = settings();
+    int rp = std::max(0, s.buildingResidentialPct);
+    int op = std::max(0, s.buildingOfficePct);
+    int ip = std::max(0, s.buildingIndustryPct);
+    int pp = std::max(0, s.buildingParkPct);
+    int sum = rp + op + ip + pp;
+    if (sum <= 0) return BType::Residential;     // degenerate: all weights zero
+    int roll = irand(0, sum - 1);
+    if (roll < rp) return BType::Residential;
+    roll -= rp;
+    if (roll < op) return BType::Office;
+    roll -= op;
+    if (roll < ip) return BType::Industry;
+    return BType::Park;
+}
+
 void World::generateBuildings() {
     const auto& s = settings();
     buildings.clear();
@@ -117,23 +137,46 @@ void World::generateBuildings() {
         b.pos.y = p.y + clampf(jy + frand(-jy, jy) * 0.4f, 0.0f, p.h - b.h);
     };
 
-    for (int i = 0; i < n; ++i) {
-        Building b;
-        if (!plots.empty()) {
-            placeInPlot(b, plots[i % (int)plots.size()]);
-        } else {
-            // Degenerate fallback (tiny world): old random scatter.
+    // First two structures are the civic anchors (always present); the rest
+    // follow the configured type mix.
+    auto finishBuilding = [&](Building& b, int placedIdx) {
+        if (placedIdx == 0)      b.type = BType::PoliceStation;
+        else if (placedIdx == 1) b.type = BType::Hospital;
+        else                     b.type = pickWeightedType();
+        b.variant = irand(0, 3);
+        b.windowSeed = (unsigned)irand(1, 1 << 30);
+    };
+
+    if (plots.empty()) {
+        // Degenerate fallback (tiny world): random scatter, no blocks to gap.
+        for (int i = 0; i < n; ++i) {
+            Building b;
             b.w = frand(90.0f, 240.0f);
             b.h = frand(90.0f, 240.0f);
             b.pos.x = frand(160.0f, std::max(161.0f, s.worldW - 160.0f - b.w));
             b.pos.y = frand(160.0f, std::max(161.0f, s.worldH - 160.0f - b.h));
+            finishBuilding(b, i);
+            buildings.push_back(b);
         }
-        if (i == 0)      b.type = BType::PoliceStation;
-        else if (i == 1) b.type = BType::Hospital;
-        else             b.type = (BType)irand(0, (int)BType::Park); // res/office/industry/park
-        b.variant = irand(0, 3);
-        b.windowSeed = (unsigned)irand(1, 1 << 30);
+        return;
+    }
+
+    // ---- Organic, probability-based placement ----
+    // Walk the shuffled plots once. Each lot is filled only with probability
+    // `fillProb` (from City Depth): low depth leaves many empty lots (scattered
+    // neighborhoods + natural gaps), high depth packs the city. The two civic
+    // anchors are force-placed first so they always exist; then we place up to
+    // `numBuildings` total. Because the plots are shuffled, the gaps land in
+    // random spots instead of forming a sterile, perfect lattice.
+    const float fillProb = fillProbabilityForDepth(s.cityDepth);
+    int placed = 0;
+    for (size_t pi = 0; pi < plots.size() && placed < n; ++pi) {
+        if (placed >= 2 && chance01() >= fillProb) continue;  // leave this lot empty
+        Building b;
+        placeInPlot(b, plots[pi]);
+        finishBuilding(b, placed);
         buildings.push_back(b);
+        ++placed;
     }
 }
 

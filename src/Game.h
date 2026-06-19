@@ -16,9 +16,11 @@ enum class GState { Menu, Playing, Paused, Settings, GameOver, Help };
 enum class GameMode { Survival, Sandbox };
 
 // Deployable / spawnable tool the player can place by clicking the world.
-// Police/Healer are the survival deploys; the Spawn* tools are sandbox-only.
+// Police/Healer are the survival deploys; the Spawn* tools are sandbox-only;
+// the Build* tools let the player place buildings (custom city planning).
 enum class Tool { None, Police, Healer,
-                  SpawnCivil, SpawnCriminal, SpawnPolice, SpawnHealer, SpawnGang };
+                  SpawnCivil, SpawnCriminal, SpawnPolice, SpawnHealer, SpawnGang,
+                  BuildResidential, BuildOffice, BuildIndustry, BuildPark };
 
 class Game {
 public:
@@ -151,6 +153,7 @@ private:
     void adjustWorldForDepth();        // set world size from settings().cityDepth
     void setSpeed(int idx);
     void deployAt(int sx, int sy);
+    void placeBuildingAt(int sx, int sy);   // custom player-placed building
     void toast(const std::string& m) { toastMsg_ = m; toast_ = 2.5f; }
     float dayBrightness() const;       // 0..1 based on world_.dayTime
     float shadowAlpha() const;         // cast-shadow opacity (fades at night)

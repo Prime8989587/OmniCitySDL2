@@ -25,6 +25,14 @@ struct Settings {
     // so a higher depth yields a compact, lively city instead of empty sprawl.
     int   cityDepth    = 7;         // 1..10
 
+    // Building-type distribution for auto-generated cities. These are *weights*
+    // (not required to sum to 100); generation normalizes them, so only the
+    // relative proportions matter. Police Station + Hospital are always added as
+    // unique civic anchors and are not part of this mix.
+    int   buildingResidentialPct = 50;   // homes
+    int   buildingOfficePct      = 25;   // office towers
+    int   buildingIndustryPct    = 15;   // industry
+    int   buildingParkPct        = 10;   // parks / green space
 
     // Graphics quality toggles (for lower-end machines)
     bool  animations   = true;      // walk-bob, smoke, window flicker
@@ -66,6 +74,17 @@ inline float roadSpacingForDepth(int depth) {
     depth = std::max(1, std::min(10, depth));
     float step = 200.0f + (5 - depth) * 22.0f;   // depth1=288 .. depth10=90
     return std::max(90.0f, step);
+}
+
+// Probability that any given city block actually receives a building. Lower
+// depth leaves more empty lots (organic gaps / scattered neighborhoods); higher
+// depth fills almost everything for a packed downtown. This is what breaks up
+// the sterile "every block filled" grid into a city with natural character.
+// depth1 = 0.25, depth5 = 0.57, depth10 = 0.97.
+inline float fillProbabilityForDepth(int depth) {
+    depth = std::max(1, std::min(10, depth));
+    float p = 0.25f + (depth - 1) * 0.08f;
+    return std::max(0.05f, std::min(1.0f, p));
 }
 
 } // namespace cv
