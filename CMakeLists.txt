@@ -20,6 +20,7 @@ set(SOURCES
     src/Sim.cpp
     src/UI.cpp
     src/Audio.cpp
+    src/Textures.cpp
     src/Game.cpp
 )
 
@@ -99,4 +100,11 @@ if(WIN32 AND TARGET SDL2::SDL2)
                 $<TARGET_FILE:SDL2::SDL2> $<TARGET_FILE_DIR:CristiVerse>)
 endif()
 
+# Copy the sprite assets next to the executable so they load at runtime
+# (the loader looks in <exe-dir>/assets first, then ./assets).
+add_custom_command(TARGET CristiVerse POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:CristiVerse>/assets)
+
 install(TARGETS CristiVerse RUNTIME DESTINATION .)
+install(DIRECTORY assets DESTINATION .)

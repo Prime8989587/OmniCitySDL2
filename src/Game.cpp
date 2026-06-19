@@ -59,6 +59,11 @@ bool Game::init() {
     }
     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
 
+    // Load the player-supplied sprite art (buildings/roads/etc.). Missing art is
+    // harmless: renderers fall back to the original procedural look.
+    textures_.init(ren_);
+    textures_.loadAll();
+
     // Physical drawable size (used to map normalized touch coords).
     SDL_GetRendererOutputSize(ren_, &winPxW_, &winPxH_);
 #ifdef __ANDROID__
@@ -121,6 +126,8 @@ bool Game::initHeadless() {
     ren_ = SDL_CreateSoftwareRenderer(shotSurface_);
     if (!ren_) { SDL_Log("software renderer: %s", SDL_GetError()); return false; }
     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+    textures_.init(ren_);
+    textures_.loadAll();
     world_.regenerate();
     view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.9f);
     layoutView();
@@ -144,6 +151,7 @@ void Game::captureFrames(const char* path, int frames) {
 void Game::shutdown() {
     if (win_) settings().saveToFile(configPath()); // only persist for real sessions
     audio_.shutdown();
+    textures_.shutdown();                          // free sprites before renderer
     if (ren_) SDL_DestroyRenderer(ren_);
     if (shotSurface_) SDL_FreeSurface(shotSurface_);
     if (win_) SDL_DestroyWindow(win_);
@@ -869,29 +877,76 @@ void Game::renderGround() {
         }
     }
 
-    // Road grid in world space — thick, high-contrast dirt paths.
-    const float step = 200.0f;
-    SDL_Color road = scaleColor({122, 116, 92, 255}, b);
-    int rw = std::max(1, (int)(6.0f * view_.cam.zoom));
-    float startX = std::floor(wx0 / step) * step;
-    float startY = std::floor(wy0 / step) * step;
-    for (float x = startX; x <= wx1; x += step) {
-        int sx, sy, sx2, sy2;
-        view_.worldToScreen(x, wy0, sx, sy);
-        view_.worldToScreen(x, wy1, sx2, sy2);
-        draw::thickLine(ren_, sx, view_.viewY, sx2, view_.viewY + view_.viewH, rw, road);
-    }
-    for (float y = startY; y <= wy1; y += step) {
-        int sx, sy, sx2, sy2;
-        view_.worldToScreen(wx0, y, sx, sy);
-        view_.worldToScreen(wx1, y, sx2, sy2);
-        draw::thickLine(ren_, view_.viewX, sy, view_.viewX + view_.viewW, sy2, rw, road);
+    // Road grid: tiled asphalt sprites when the art is present; otherwise the
+    // original thick dirt paths.
+    if (!renderRoadSprites()) {
+        const float step = 200.0f;
+        SDL_Color road = scaleColor({122, 116, 92, 255}, b);
+        int rw = std::max(1, (int)(6.0f * view_.cam.zoom));
+        float startX = std::floor(wx0 / step) * step;
+        float startY = std::floor(wy0 / step) * step;
+        for (float x = startX; x <= wx1; x += step) {
+            int sx, sy, sx2, sy2;
+            view_.worldToScreen(x, wy0, sx, sy);
+            view_.worldToScreen(x, wy1, sx2, sy2);
+            draw::thickLine(ren_, sx, view_.viewY, sx2, view_.viewY + view_.viewH, rw, road);
+        }
+        for (float y = startY; y <= wy1; y += step) {
+            int sx, sy, sx2, sy2;
+            view_.worldToScreen(wx0, y, sx, sy);
+            view_.worldToScreen(wx1, y, sx2, sy2);
+            draw::thickLine(ren_, view_.viewX, sy, view_.viewX + view_.viewW, sy2, rw, road);
+        }
     }
 
     // World border (chunky outline).
     SDL_Rect border;
     if (view_.worldRectToScreen(0, 0, settings().worldW, settings().worldH, border))
         draw::thickRect(ren_, border, 3, {90, 110, 140, 220});
+}
+
+// Tile the player's asphalt sprites into the same 200-unit road grid the dirt
+// paths used. Straight tiles run along each road (rotated 90° for the vertical
+// set) and the crossing sprite sits at every intersection. Returns false when
+// the road art is missing so renderGround() can fall back to dirt lines.
+bool Game::renderRoadSprites() {
+    SDL_Texture* linear = textures_.get("AsphaltLinear.png");
+    if (!linear) return false;
+    SDL_Texture* inter = textures_.get("AsphaltParralel.png");
+    if (!inter) inter = linear;
+
+    const float step = 200.0f;   // spacing between roads (matches the old grid)
+    const float T    = 40.0f;    // square road-tile size in world units
+
+    float wx0, wy0, wx1, wy1;
+    view_.screenToWorld(view_.viewX, view_.viewY, wx0, wy0);
+    view_.screenToWorld(view_.viewX + view_.viewW, view_.viewY + view_.viewH, wx1, wy1);
+
+    auto blit = [&](SDL_Texture* t, float cx, float cy, double ang) {
+        SDL_Rect dst;
+        if (!view_.worldRectToScreen(cx - T * 0.5f, cy - T * 0.5f, T, T, dst)) return;
+        if (dst.w <= 0 || dst.h <= 0) return;
+        SDL_RenderCopyEx(ren_, t, nullptr, &dst, ang, nullptr, SDL_FLIP_NONE);
+    };
+
+    float gx0 = std::floor(wx0 / step) * step;
+    float gy0 = std::floor(wy0 / step) * step;
+    float tx0 = std::floor(wx0 / T) * T;
+    float ty0 = std::floor(wy0 / T) * T;
+
+    // Horizontal roads (constant y): tiles step along x.
+    for (float y = gy0; y <= wy1; y += step)
+        for (float x = tx0; x <= wx1; x += T)
+            blit(linear, x + T * 0.5f, y, 0.0);
+    // Vertical roads (constant x): tiles step along y, rotated a quarter turn.
+    for (float x = gx0; x <= wx1; x += step)
+        for (float y = ty0; y <= wy1; y += T)
+            blit(linear, x, y + T * 0.5f, 90.0);
+    // Crossings on top at each grid intersection.
+    for (float y = gy0; y <= wy1; y += step)
+        for (float x = gx0; x <= wx1; x += step)
+            blit(inter, x, y, 0.0);
+    return true;
 }
 
 // Park lawns, ponds, and flowers form a ground "decoration" layer drawn after
@@ -982,12 +1037,79 @@ void Game::renderGrid() {
     }
 }
 
+// Pick the player-supplied building sprite for the current time of day and a
+// deterministic per-building "lights on" state. Returns nullptr when the art is
+// missing so renderBuilding() can fall back to the procedural look.
+SDL_Texture* Game::buildingTexture(const Building& b) const {
+    if (!textures_.ready()) return nullptr;
+
+    // Industry uses the dedicated factory sprite (no day/night variants).
+    if (b.type == BType::Industry)
+        return textures_.get("factory.bmp");
+
+    const char* base = nullptr;
+    switch (b.type) {
+        case BType::Residential:   base = (b.variant & 1) ? "House" : "Apartment"; break;
+        case BType::Office:        base = "Job";   break;
+        case BType::PoliceStation: base = "Job";   break;   // + badge marker on top
+        case BType::Hospital:      base = "House";  break;   // + cross marker on top
+        default:                   return nullptr;            // Park etc.
+    }
+
+    float hour = world_.hourOfDay();
+    bool day = settings().dayNight ? (hour >= 6.0f && hour < 18.0f) : true;
+    // Deterministic lit state: most lights on at night, a few on by day.
+    int rseed = (int)((b.windowSeed >> 9) & 255);
+    bool lit  = day ? (rseed < 96) : (rseed < 184);
+
+    std::string name = std::string(base) + (day ? "Day" : "Night")
+                     + "Light" + (lit ? "ON" : "OFF") + ".png";
+    return textures_.get(name);
+}
+
 void Game::renderBuilding(const Building& b, Uint8 alpha) {
     SDL_Rect r;
     if (!view_.worldRectToScreen(b.pos.x, b.pos.y, b.w, b.h, r)) return;
     float bright = dayBrightness();
     auto A = [&](SDL_Color c) { c.a = (Uint8)((int)c.a * alpha / 255); return c; };
 
+    // ---- Sprite path: draw the player's PNG/BMP building art. -------------
+    // The source sprites are square (48x48); we scale them to the footprint
+    // width to preserve their 1:1 aspect (no stretching) and anchor them to the
+    // footprint's bottom edge so each building "rises" from its plot. Depth
+    // sorting by footprint-bottom keeps the layering correct.
+    if (SDL_Texture* tex = buildingTexture(b)) {
+        int side = std::max(2, r.w);
+        SDL_Rect dst{ r.x, r.y + r.h - side, side, side };
+
+        if (settings().shadows) {
+            float zoom = view_.cam.zoom;
+            int off = (int)clampf(b.h * 0.08f * zoom, 3.0f, 24.0f);
+            int shh = std::max(2, side / 6);
+            SDL_Rect sh{ r.x + off, r.y + r.h - shh + off / 2, side, shh };
+            draw::fillRect(ren_, sh, {0, 0, 0, (Uint8)(shadowAlpha() * 110)});
+        }
+
+        SDL_SetTextureAlphaMod(tex, alpha);          // occlusion x-ray support
+        SDL_RenderCopy(ren_, tex, nullptr, &dst);
+        SDL_SetTextureAlphaMod(tex, 255);
+
+        // Keep the identifying markers for special buildings on top of the art.
+        if (b.type == BType::Hospital && side > 18) {
+            int cx = dst.x + side / 2, cy = dst.y + side / 2;
+            int sz = std::max(4, side / 7);
+            draw::fillRect(ren_, {cx - sz / 3, cy - sz, (2 * sz) / 3, 2 * sz}, A({226, 56, 56, 255}));
+            draw::fillRect(ren_, {cx - sz, cy - sz / 3, 2 * sz, (2 * sz) / 3}, A({226, 56, 56, 255}));
+        } else if (b.type == BType::PoliceStation && side > 18) {
+            int cx = dst.x + side / 2, cy = dst.y + side / 3;
+            int sz = std::max(3, side / 9);
+            draw::fillRect(ren_, {cx - sz, cy - sz, 2 * sz, 2 * sz}, A({240, 218, 90, 255}));
+            draw::fillRect(ren_, {cx - sz + 2, cy - sz + 2, 2 * sz - 4, 2 * sz - 4}, A({58, 96, 206, 255}));
+        }
+        return;
+    }
+
+    // ---- Procedural fallback (original look when art is missing). ---------
     // Ground shadow cast toward the lower-right; longer for taller buildings,
     // stronger at midday and gone at night.
     if (settings().shadows) {
@@ -1079,6 +1201,16 @@ void Game::renderTree(const Tree& t) {
         int shw = std::max(3, h / 2), shh = std::max(2, h / 6);
         draw::fillRect(ren_, { sx - shw / 2 + h / 8, sy - shh / 2, shw, shh },
                        {0, 0, 0, (Uint8)(shadowAlpha() * 120)});
+    }
+
+    // Sprite path: draw the player's tree art, square (1:1) and anchored so its
+    // base sits at the trunk position. Falls through to procedural trees if the
+    // art is missing.
+    if (SDL_Texture* tex = textures_.get("tree.bmp")) {
+        int side = std::max(4, (int)(t.height * zoom * 1.6f));
+        SDL_Rect dst{ sx - side / 2, sy - side, side, side };
+        SDL_RenderCopy(ren_, tex, nullptr, &dst);
+        return;
     }
 
     sx = (sx / 2) * 2; sy = (sy / 2) * 2;        // snap to pixel grid

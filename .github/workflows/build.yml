@@ -42,6 +42,8 @@ jobs:
           Copy-Item "sdl2/SDL2-$env:SDL2_VERSION/lib/x64/SDL2.dll" dist/
           Copy-Item README.md, MODDING.md dist/
           Copy-Item packaging/cristiverse.cfg dist/
+          New-Item -ItemType Directory -Force -Path dist/assets | Out-Null
+          Copy-Item assets/* dist/assets/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

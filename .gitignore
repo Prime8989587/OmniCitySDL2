@@ -13,6 +13,10 @@
 *.bmp
 *.png
 !docs/*.png
+# Keep the sprite art tracked (buildings/roads/trees/vehicles).
+!assets/
+!assets/*.png
+!assets/*.bmp
 
 # Editor / OS
 .vscode/

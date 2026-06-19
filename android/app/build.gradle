@@ -31,6 +31,14 @@ android {
         }
     }
 
+    // Bundle the sprite art (repo-root assets/) into the APK's assets root so
+    // SDL_RWFromFile("Name.png") resolves it via the AAssetManager at runtime.
+    sourceSets {
+        main {
+            assets.srcDirs += ['../../assets']
+        }
+    }
+
     // Build the native game (and SDL2) from the project's root CMakeLists.txt.
     externalNativeBuild {
         cmake {

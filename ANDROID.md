@@ -112,6 +112,22 @@ regardless of the device's pixel density.
 
 ---
 
+## Sprite assets in the APK
+
+The building/road/tree/vehicle sprites live in the repo‑root `assets/` folder.
+`android/app/build.gradle` adds that folder to the APK's asset root:
+
+```gradle
+sourceSets { main { assets.srcDirs += ['../../assets'] } }
+```
+
+so at runtime the native code loads each sprite with `SDL_RWFromFile("Name.png")`,
+which SDL maps to the APK's `AAssetManager`. PNGs are decoded by the vendored
+`stb_image` (no SDL_image needed). If an asset is missing the renderer falls back
+to the original procedural drawing, so a stripped build still runs.
+
+---
+
 ## The launcher icon
 
 ![CristiVerse launcher icon](docs/android-icon.png)

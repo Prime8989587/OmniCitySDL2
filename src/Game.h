@@ -6,6 +6,7 @@
 #include "Render.h"
 #include "UI.h"
 #include "Audio.h"
+#include "Textures.h"
 
 namespace cv {
 
@@ -34,6 +35,7 @@ private:
     SDL_Renderer* ren_ = nullptr;
     SDL_Surface*  shotSurface_ = nullptr;   // used only in headless capture mode
     Audio audio_;
+    Textures textures_;                     // player-supplied PNG/BMP sprite art
 
     World world_;
     View  view_;
@@ -118,6 +120,9 @@ private:
     void renderBuilding(const Building& b, Uint8 alpha);
     void renderTree(const Tree& t);
     void renderAgent(const Agent& a);
+    // Sprite helpers (return nullptr when art is missing -> procedural fallback).
+    SDL_Texture* buildingTexture(const Building& b) const; // day/night + lit pick
+    bool renderRoadSprites();                              // tiled asphalt grid
     void renderParticles();
     void renderFloats();
     void renderDayNight();

@@ -7,9 +7,12 @@ healers while the simulation plays out.
 
 This is a full redesign of the original single-file `cristiverse_sdl2.cpp`
 prototype into a modular, polished, downloadable game. It uses **pure SDL2** —
-no SDL_ttf / SDL_image / SDL_mixer and **no external asset files**. All graphics,
-the bitmap font, and the sound effects are generated procedurally, so the whole
-game ships as a single small executable plus `SDL2.dll`.
+no SDL_ttf / SDL_image / SDL_mixer. The bitmap font and sound effects are
+generated procedurally; buildings, roads, and trees are drawn from small
+**pixel-art sprites** in [`assets/`](assets) (PNG decoded with the vendored
+single-header `stb_image`, so there is still no SDL_image dependency). If the
+sprite art is missing the renderer **falls back to the original procedural
+look**, so the game never fails to start.
 
 ![CristiVerse gameplay](docs/screenshot.png)
 
@@ -203,8 +206,11 @@ src/
   Sim.{h,cpp}      Agents, buildings, particles, spatial grid, AI step
   UI.{h,cpp}       Immediate-mode widgets (button/toggle/slider/panel)
   Audio.{h,cpp}    Procedural SFX engine
+  Textures.{h,cpp} Sprite loader/cache (PNG via stb_image, BMP via SDL core)
+  stb_image.h      Vendored single-header PNG decoder (public domain)
   Game.{h,cpp}     State machine, input, world + UI rendering
   main.cpp         Entry point (+ headless --shot screenshot mode)
+assets/            Pixel-art sprites (buildings, roads, trees, vehicles)
 CMakeLists.txt     Cross-platform build (desktop + Android)
 android/           Android project (Gradle + adaptive icon + SDL fetch script)
 .github/workflows/ CI that builds Windows, Linux & the Android APK

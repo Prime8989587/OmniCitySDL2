@@ -15,6 +15,10 @@ cp build/bin/CristiVerse "$STAGE/"
 cp README.md MODDING.md "$STAGE/"
 cp packaging/cristiverse.cfg "$STAGE/"
 
+# Bundle the sprite art so the packaged game shows the building/road/tree PNGs.
+mkdir -p "$STAGE/assets"
+cp assets/* "$STAGE/assets/"
+
 # Bundle the SDL2 shared library so the package is self-contained.
 SDL_LIB="$(ldd build/bin/CristiVerse | awk '/libSDL2/{print $3; exit}')"
 if [ -n "${SDL_LIB:-}" ] && [ -f "$SDL_LIB" ]; then
