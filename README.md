@@ -26,9 +26,13 @@ look**, so the game never fails to start.
   with flat roofs and big lit windows, little pixel-figure citizens, blocky trees
   (deciduous, pine, willow, dead), a checkerboard grass ground, dirt roads, park
   ponds and flower patches, cast shadows, factory smoke, and a day/night cycle.
-- **Depth-sorted world** — buildings, trees, and agents are painted back-to-front
-  by base Y, and a building turns semi-transparent (x-ray) when an agent walks
-  behind it. Zoom no longer disturbs the window pattern.
+- **Depth-sorted world** — buildings, trees, agents, and traffic are painted
+  back-to-front by base Y, and a building turns semi-transparent (x-ray) when an
+  agent walks behind it. Zoom no longer disturbs the window pattern.
+- **Compact, living cities** — a **City Depth** slider (1–10) controls density:
+  higher depth shrinks the world, tightens the road grid, and packs buildings
+  into the blocks for a dense, lively downtown instead of empty sprawl. Cars,
+  luxury cars, and trucks drive the streets as cosmetic background traffic.
 - **Day/night life** — a 24-hour clock drives window colour (dark blue at night,
   white-yellow at midday, orange at dusk); civilians walk home and sleep indoors
   between 22:00 and 06:00, then spill back out at dawn.

@@ -120,6 +120,7 @@ private:
     void renderBuilding(const Building& b, Uint8 alpha);
     void renderTree(const Tree& t);
     void renderAgent(const Agent& a);
+    void renderVehicle(const Vehicle& v);           // cosmetic background traffic
     // Sprite helpers (return nullptr when art is missing -> procedural fallback).
     SDL_Texture* buildingTexture(const Building& b) const; // day/night + lit pick
     bool renderRoadSprites();                              // tiled asphalt grid
@@ -147,6 +148,7 @@ private:
     // ---- helpers ----
     void startNewGame();
     void startSandbox();
+    void adjustWorldForDepth();        // set world size from settings().cityDepth
     void setSpeed(int idx);
     void deployAt(int sx, int sy);
     void toast(const std::string& m) { toastMsg_ = m; toast_ = 2.5f; }

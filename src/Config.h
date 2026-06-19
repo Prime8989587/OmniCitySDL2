@@ -2,6 +2,7 @@
 // CristiVerse / LogOS Engine — SDL2 redesign (C++17, pure SDL2).
 #pragma once
 #include <string>
+#include <algorithm>
 
 namespace cv {
 
@@ -12,12 +13,18 @@ struct Settings {
     bool  fullscreen   = false;
     bool  vsync        = true;
 
-    float worldW       = 2400.0f;   // world units ("meters")
+    float worldW       = 2400.0f;   // world units ("meters") — derived from cityDepth at start
     float worldH       = 2400.0f;
 
     int   numAgents    = 1500;      // can push to ~10000
     int   numBuildings = 64;
     int   numTrees     = 140;       // scattered decorative trees
+
+    // City density: 1 = sparse/spread out, 10 = small & tightly packed. Drives
+    // the world size, the road-grid spacing, and how buildings fill the blocks
+    // so a higher depth yields a compact, lively city instead of empty sprawl.
+    int   cityDepth    = 7;         // 1..10
+
 
     // Graphics quality toggles (for lower-end machines)
     bool  animations   = true;      // walk-bob, smoke, window flicker
@@ -40,5 +47,25 @@ struct Settings {
 
 // Global access to the active settings (defined in Config.cpp).
 Settings& settings();
+
+// ---- City Depth geometry (shared by the simulation and the renderer) ----
+// These MUST agree between world generation and rendering so roads, building
+// blocks, vehicle lanes, and the world bounds all line up on the same grid.
+
+// Square world side length for a given depth. Higher depth => smaller, denser
+// world. depth 5 == 1800 (compact default); depth 1 ~= 2376; depth 10 ~= 1080.
+inline float worldSizeForDepth(int depth) {
+    depth = std::max(1, std::min(10, depth));
+    float scale = 1.0f - (depth - 5) * 0.08f;
+    return 1800.0f * scale;
+}
+
+// Spacing between roads (and thus the size of each city block) for a depth.
+// depth 5 == 200; lower depth widens it (sparser), higher tightens it.
+inline float roadSpacingForDepth(int depth) {
+    depth = std::max(1, std::min(10, depth));
+    float step = 200.0f + (5 - depth) * 22.0f;   // depth1=288 .. depth10=90
+    return std::max(90.0f, step);
+}
 
 } // namespace cv

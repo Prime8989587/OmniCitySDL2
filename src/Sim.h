@@ -77,6 +77,28 @@ struct Tree {
     unsigned seed = 0;       // per-tree shape variation
 };
 
+enum class VehicleType : int { Civilian = 0, Luxury, Truck, COUNT };
+
+// Cosmetic background traffic. Each vehicle is bound to one straight road line
+// and drives along it, wrapping at the world edge. Vehicles never collide with
+// agents or buildings — they just make the streets feel alive.
+struct Vehicle {
+    Vec2        pos;                 // world-space center (derived each step)
+    bool        horizontal = true;   // true: drives along x; false: along y
+    float       axis  = 0.0f;        // fixed road coordinate (y if horizontal, else x)
+    float       t     = 0.0f;        // position along the road (the free axis)
+    float       dir   = 1.0f;        // +1 / -1 travel direction
+    float       lane  = 0.0f;        // perpendicular offset from the road centerline
+    float       speed = 120.0f;      // world units / second
+    VehicleType type  = VehicleType::Civilian;
+};
+
+// A full-span straight road on the city grid (used to place + drive vehicles).
+struct RoadLine {
+    bool  horizontal = true;   // spans along x (true) or along y (false)
+    float axis = 0.0f;         // the constant coordinate of the line
+};
+
 // A purely decorative pond placed inside a park zone (non-solid).
 struct Water {
     Vec2     pos;            // center in world space
@@ -148,6 +170,8 @@ public:
     std::vector<Particle>  particles;
     std::vector<FloatText> floats;
     std::vector<LogEntry>  log;
+    std::vector<RoadLine>  roads;       // city road grid (for traffic)
+    std::vector<Vehicle>   vehicles;    // cosmetic background traffic
     Stats stats;
     SpatialGrid grid;
 
@@ -157,10 +181,16 @@ public:
     // Hour of day in [0,24). dayTime 0.5 == 12:00 (brightest / noon).
     float hourOfDay() const { return dayTime * 24.0f; }
 
-    void regenerate();          // rebuild buildings + trees + agents
+    void regenerate();          // rebuild buildings + trees + agents + roads + traffic
     void regenerateAgentsOnly(); // keep buildings/trees, respawn agents
     void step(float dt);        // advance one simulation step by dt seconds
     void recomputeStats();
+
+    // Traffic (cosmetic). Road grid is rebuilt with the world; vehicles drive
+    // along it every step.
+    void buildRoadNetwork();        // lay road lines from worldW/H + cityDepth
+    void spawnVehicles(int count);  // place cars/trucks on the road grid
+    void stepVehicles(float dt);    // advance vehicles along their roads
 
     // Spawn helpers (used by sim + UI feedback).
     void spawnBurst(Vec2 p, SDL_Color c, int n, float speed, bool gravity = false);

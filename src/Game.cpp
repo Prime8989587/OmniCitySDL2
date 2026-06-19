@@ -86,6 +86,7 @@ bool Game::init() {
 
     audio_.init(); // soft-fails when no device
 
+    adjustWorldForDepth();
     world_.regenerate();
 
     view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.55f);
@@ -128,6 +129,7 @@ bool Game::initHeadless() {
     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
     textures_.init(ren_);
     textures_.loadAll();
+    adjustWorldForDepth();
     world_.regenerate();
     view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.9f);
     layoutView();
@@ -449,9 +451,20 @@ void Game::setSpeed(int idx) {
     simSpeed_ = kSpeeds[speedIndex_];
 }
 
+// Derive the world bounds from the City Depth setting. Always computed from a
+// fixed reference (never from the previous worldW) so repeated rebuilds don't
+// compound. Higher depth => smaller, denser world.
+void Game::adjustWorldForDepth() {
+    auto& s = settings();
+    float size = worldSizeForDepth(s.cityDepth);
+    s.worldW = size;
+    s.worldH = size;
+}
+
 void Game::startNewGame() {
     auto& s = settings();
     mode_ = GameMode::Survival;
+    adjustWorldForDepth();
     world_.regenerate();
     view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.55f);
     selectedId_ = -1;
@@ -474,6 +487,7 @@ void Game::startNewGame() {
 void Game::startSandbox() {
     auto& s = settings();
     mode_ = GameMode::Sandbox;
+    adjustWorldForDepth();
     world_.regenerate();
     view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.55f);
     selectedId_ = -1;
@@ -781,9 +795,9 @@ void Game::renderWorld() {
         buildingOccluded_[i] = occ ? 1 : 0;
     }
 
-    // Painter's pass: buildings, trees, and agents interleaved by base Y so
-    // agents lower on screen draw in front and higher ones draw behind.
-    struct Item { float key; int type; int idx; }; // type 0=building 1=tree 2=agent
+    // Painter's pass: buildings, trees, agents, and traffic interleaved by base
+    // Y so items lower on screen draw in front and higher ones draw behind.
+    struct Item { float key; int type; int idx; }; // 0=building 1=tree 2=agent 3=vehicle
     static std::vector<Item> items;
     items.clear();
     for (int i = 0; i < (int)world_.buildings.size(); ++i) {
@@ -797,13 +811,16 @@ void Game::renderWorld() {
         if (!a.alive || a.sleeping) continue;
         items.push_back({ a.pos.y, 2, i });
     }
+    for (int i = 0; i < (int)world_.vehicles.size(); ++i)
+        items.push_back({ world_.vehicles[i].pos.y, 3, i });
     std::sort(items.begin(), items.end(),
               [](const Item& a, const Item& b) { return a.key < b.key; });
     for (const Item& it : items) {
         if (it.type == 0)      renderBuilding(world_.buildings[it.idx],
                                               buildingOccluded_[it.idx] ? (Uint8)175 : (Uint8)255);
         else if (it.type == 1) renderTree(world_.trees[it.idx]);
-        else                   renderAgent(world_.agents[it.idx]);
+        else if (it.type == 2) renderAgent(world_.agents[it.idx]);
+        else                   renderVehicle(world_.vehicles[it.idx]);
     }
 
     renderParticles();
@@ -880,7 +897,7 @@ void Game::renderGround() {
     // Road grid: tiled asphalt sprites when the art is present; otherwise the
     // original thick dirt paths.
     if (!renderRoadSprites()) {
-        const float step = 200.0f;
+        const float step = roadSpacingForDepth(settings().cityDepth);
         SDL_Color road = scaleColor({122, 116, 92, 255}, b);
         int rw = std::max(1, (int)(6.0f * view_.cam.zoom));
         float startX = std::floor(wx0 / step) * step;
@@ -915,7 +932,7 @@ bool Game::renderRoadSprites() {
     SDL_Texture* inter = textures_.get("AsphaltParralel.png");
     if (!inter) inter = linear;
 
-    const float step = 200.0f;   // spacing between roads (matches the old grid)
+    const float step = roadSpacingForDepth(settings().cityDepth);  // depth-aware grid
     const float T    = 40.0f;    // square road-tile size in world units
 
     float wx0, wy0, wx1, wy1;
@@ -1382,6 +1399,32 @@ void Game::renderAgent(const Agent& a) {
     }
 }
 
+// Cosmetic background traffic. The car sprites are square with the vehicle
+// drawn facing right, so we render a square world rect (no stretching) centered
+// on the car and rotate it to face the direction of travel.
+void Game::renderVehicle(const Vehicle& v) {
+    const char* name = nullptr;
+    float worldSize = 26.0f;
+    switch (v.type) {
+        case VehicleType::Civilian: name = "CivilianCar.png"; worldSize = 26.0f; break;
+        case VehicleType::Luxury:   name = "LuxuryCar.png";   worldSize = 26.0f; break;
+        case VehicleType::Truck:    name = "Truck.png";       worldSize = 40.0f; break;
+        default: return;
+    }
+    SDL_Texture* tex = textures_.get(name);
+    if (!tex) return;
+
+    SDL_Rect dst;
+    if (!view_.worldRectToScreen(v.pos.x - worldSize * 0.5f,
+                                 v.pos.y - worldSize * 0.5f,
+                                 worldSize, worldSize, dst)) return;
+    if (dst.w <= 0 || dst.h <= 0) return;
+
+    double ang = v.horizontal ? (v.dir >= 0 ? 0.0  : 180.0)
+                              : (v.dir >= 0 ? 90.0 : -90.0);
+    SDL_RenderCopyEx(ren_, tex, nullptr, &dst, ang, nullptr, SDL_FLIP_NONE);
+}
+
 void Game::renderParticles() {
     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
     for (const auto& p : world_.particles) {
@@ -1807,7 +1850,7 @@ void Game::renderPause() {
 void Game::renderSettingsScreen() {
     dimScreen(180);
     auto& s = settings();
-    int pw = 440, ph = 570;
+    int pw = 440, ph = 624;
     SDL_Rect box{ s.screenW / 2 - pw / 2, s.screenH / 2 - ph / 2, pw, ph };
     ui::panel(ren_, box);
     int x = box.x + 24, y = box.y + 20, w = pw - 48;
@@ -1833,12 +1876,17 @@ void Game::renderSettingsScreen() {
     y += 40;
     float bn = (float)s.numBuildings;
     if (ui::sliderF(ren_, {x, y, w, 20}, "BUILDINGS (APPLY TO REBUILD)", bn, 8.0f, 160.0f, in_)) s.numBuildings = (int)bn;
+    y += 40;
+    float cd = (float)s.cityDepth;
+    if (ui::sliderF(ren_, {x, y, w, 20}, "CITY DEPTH 1-10 (APPLY TO REBUILD)", cd, 1.0f, 10.0f, in_))
+        s.cityDepth = std::max(1, std::min(10, (int)(cd + 0.5f)));
     y += 44;
 
     SDL_Rect bApply{ x, y, w / 2 - 6, 36 };
     SDL_Rect bBack { x + w / 2 + 6, y, w / 2 - 6, 36 };
     if (ui::button(ren_, bApply, "REBUILD WORLD", in_, {120, 200, 140, 255}, 1)) {
         audio_.click(); settings().saveToFile(configPath());
+        adjustWorldForDepth();
         world_.regenerate();
         view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.55f);
         toast("Settings saved. World rebuilt.");

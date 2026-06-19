@@ -55,15 +55,20 @@ void SpatialGrid::build(const std::vector<Agent>& agents, float worldW, float wo
 
 // ---------------- World ----------------
 void World::regenerate() {
+    const auto& s = settings();
     tick = 0;
     dayTime = 0.30f;
     particles.clear();
     floats.clear();
     log.clear();
+    buildRoadNetwork();                 // road grid first: buildings fill its blocks
     generateBuildings();
     generateTrees();
     generateParkDecor();
     generateAgents();
+    // Traffic scales with the city size and density to keep streets lively.
+    int vcount = std::max(16, s.numBuildings / 2 + s.cityDepth * 3);
+    spawnVehicles(std::min(160, vcount));
     recomputeStats();
     addLog("World generated.", {180, 220, 255, 255});
 }
@@ -80,13 +85,49 @@ void World::generateBuildings() {
     const auto& s = settings();
     buildings.clear();
     int n = std::max(4, s.numBuildings);
-    // Guarantee at least one police station and one hospital.
+    float step = roadSpacingForDepth(s.cityDepth);
+
+    // Build the list of city blocks (the squares between roads) and use them as
+    // building plots, so structures cluster into neighborhoods framed by roads
+    // instead of floating randomly. Higher City Depth => smaller world + tighter
+    // grid => the same building count packs into a compact, lively city.
+    struct Plot { float x, y, w, h; };
+    std::vector<Plot> plots;
+    const float inset = 20.0f;   // clear the asphalt (road tile half-width)
+    for (float by = step; by + step <= s.worldH; by += step) {
+        for (float bx = step; bx + step <= s.worldW; bx += step) {
+            float px = bx + inset, py = by + inset;
+            float pw = step - inset * 2.0f, ph = step - inset * 2.0f;
+            if (pw < 44.0f || ph < 44.0f) continue;
+            plots.push_back({px, py, pw, ph});
+        }
+    }
+    // Shuffle plots (Fisher–Yates) so neighborhoods vary between regenerations.
+    for (int i = (int)plots.size() - 1; i > 0; --i)
+        std::swap(plots[i], plots[irand(0, i)]);
+
+    auto placeInPlot = [&](Building& b, const Plot& p) {
+        // Footprint fits the plot (the visible sprite is a fixed size; footprint
+        // only drives collision/occlusion, so keeping it inside the block keeps
+        // the streets walkable). Centered with a little jitter for variety.
+        b.w = clampf(frand(90.0f, 240.0f), 48.0f, p.w);
+        b.h = clampf(frand(90.0f, 240.0f), 48.0f, p.h);
+        float jx = (p.w - b.w) * 0.5f, jy = (p.h - b.h) * 0.5f;
+        b.pos.x = p.x + clampf(jx + frand(-jx, jx) * 0.4f, 0.0f, p.w - b.w);
+        b.pos.y = p.y + clampf(jy + frand(-jy, jy) * 0.4f, 0.0f, p.h - b.h);
+    };
+
     for (int i = 0; i < n; ++i) {
         Building b;
-        b.w = frand(90.0f, 240.0f);
-        b.h = frand(90.0f, 240.0f);
-        b.pos.x = frand(160.0f, s.worldW - 160.0f - b.w);
-        b.pos.y = frand(160.0f, s.worldH - 160.0f - b.h);
+        if (!plots.empty()) {
+            placeInPlot(b, plots[i % (int)plots.size()]);
+        } else {
+            // Degenerate fallback (tiny world): old random scatter.
+            b.w = frand(90.0f, 240.0f);
+            b.h = frand(90.0f, 240.0f);
+            b.pos.x = frand(160.0f, std::max(161.0f, s.worldW - 160.0f - b.w));
+            b.pos.y = frand(160.0f, std::max(161.0f, s.worldH - 160.0f - b.h));
+        }
         if (i == 0)      b.type = BType::PoliceStation;
         else if (i == 1) b.type = BType::Hospital;
         else             b.type = (BType)irand(0, (int)BType::Park); // res/office/industry/park
@@ -303,6 +344,50 @@ void World::recomputeStats() {
     stats.avgStress = alive ? (float)(stressSum / alive) : 0.0f;
 }
 
+// ---------------- Traffic (cosmetic) ----------------
+void World::buildRoadNetwork() {
+    const auto& s = settings();
+    roads.clear();
+    float step = roadSpacingForDepth(s.cityDepth);
+    // Skip the line at 0 (the world border) for a cleaner frame.
+    for (float y = step; y < s.worldH; y += step) roads.push_back({true,  y});
+    for (float x = step; x < s.worldW; x += step) roads.push_back({false, x});
+}
+
+void World::spawnVehicles(int count) {
+    const auto& s = settings();
+    vehicles.clear();
+    if (roads.empty()) return;
+    vehicles.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        Vehicle v;
+        const RoadLine& r = roads[irand(0, (int)roads.size() - 1)];
+        v.horizontal = r.horizontal;
+        v.axis = r.axis;
+        float span = v.horizontal ? s.worldW : s.worldH;
+        v.t   = frand(0.0f, span);
+        v.dir = irand(0, 1) ? 1.0f : -1.0f;
+        v.lane = v.dir * 7.0f;                 // keep to one side (two-way streets)
+        v.type = (VehicleType)irand(0, (int)VehicleType::COUNT - 1);
+        v.speed = (v.type == VehicleType::Truck) ? frand(50.0f, 72.0f)
+                                                 : frand(85.0f, 130.0f);
+        vehicles.push_back(v);
+    }
+}
+
+void World::stepVehicles(float dt) {
+    const auto& s = settings();
+    for (auto& v : vehicles) {
+        float span = v.horizontal ? s.worldW : s.worldH;
+        if (span <= 1.0f) continue;
+        v.t += v.dir * v.speed * dt;
+        while (v.t < 0.0f)    v.t += span;      // wrap around at the world edge
+        while (v.t >= span)   v.t -= span;
+        if (v.horizontal) v.pos = { v.t,            v.axis + v.lane };
+        else              v.pos = { v.axis + v.lane, v.t            };
+    }
+}
+
 // ---------------- Simulation step ----------------
 void World::step(float dt) {
     const auto& s = settings();
@@ -314,6 +399,8 @@ void World::step(float dt) {
         dayTime += dt / 120.0f;
         if (dayTime >= 1.0f) dayTime -= 1.0f;
     }
+
+    stepVehicles(dt);   // cosmetic traffic moves independently of agents
 
     grid.build(agents, s.worldW, s.worldH, 90.0f);
 
