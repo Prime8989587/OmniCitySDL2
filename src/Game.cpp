@@ -568,8 +568,10 @@ void Game::placeBuildingAt(int sx, int sy) {
     }
 
     float wx, wy; view_.screenToWorld(sx, sy, wx, wy);
-    float bw = frand(96.0f, 150.0f);
-    float bh = frand(96.0f, 150.0f);
+    // Parks are open green plots, so give them a wider footprint; buildings use
+    // the same small footprint as the auto-generated clusters.
+    float bw = (type == BType::Park) ? frand(120.0f, 170.0f) : frand(34.0f, 56.0f);
+    float bh = (type == BType::Park) ? frand(120.0f, 170.0f) : frand(44.0f, 70.0f);
     float px = clampf(wx - bw * 0.5f, 8.0f, s.worldW - bw - 8.0f);
     float py = clampf(wy - bh * 0.5f, 8.0f, s.worldH - bh - 8.0f);
 
@@ -1148,22 +1150,22 @@ void Game::renderBuilding(const Building& b, Uint8 alpha) {
     auto A = [&](SDL_Color c) { c.a = (Uint8)((int)c.a * alpha / 255); return c; };
 
     // ---- Sprite path: draw the player's PNG/BMP building art. -------------
-    // Every building sprite is drawn at ONE fixed world-space size so all
-    // buildings share an identical on-screen scale regardless of their plot
-    // footprint (b.w/b.h vary 90..240 and must NOT change the art size — that
-    // was the old bug where `side = r.w` made each building a different size).
-    //
-    // The size is derived, not eyeballed: the sprites are square with a door
-    // ~3.5/32 (≈10.9%) of their height, and an agent figure is ~8.7 world units
-    // tall. 80 world units is the smallest size at which the door is at least as
-    // tall as an agent (0.109 * 80 ≈ 8.7), so the human:door:building
-    // proportions stay realistic at every zoom. Only the footprint's horizontal
-    // centre and bottom edge are read from the plot, so each building still
-    // "rises" from its plot and depth-sorts by its base.
+    // The sprite size is driven by a single base constant (NOT the plot
+    // footprint b.w/b.h — that was the old bug where `side = r.w` made each
+    // building a wildly different size). The footprint only supplies the
+    // horizontal centre and bottom edge, so each building "rises" from its spot
+    // and depth-sorts by its base. Buildings are kept small so a cluster of them
+    // packs into one block and overlaps into a skyline.
     if (SDL_Texture* tex = buildingTexture(b)) {
-        static constexpr float kBuildingSpriteWorld = 80.0f;   // world units, all buildings
+        // Buildings are deliberately small so several pack into one block and
+        // their sprites overlap into a skyline (clusters, not lone cubes). A
+        // gentle deterministic per-building scale (from windowSeed) adds height
+        // variety to the skyline without the old "every building a different
+        // random size" inconsistency.
+        static constexpr float kBuildingSpriteWorld = 58.0f;   // world units, base size
+        float vary = 0.86f + (float)(b.windowSeed % 5) * 0.075f; // 0.86 .. 1.16
         float zoom = view_.cam.zoom;
-        int side = std::max(2, (int)std::lround(kBuildingSpriteWorld * zoom));
+        int side = std::max(2, (int)std::lround(kBuildingSpriteWorld * vary * zoom));
         int cx   = r.x + r.w / 2;                              // footprint centre (screen)
         SDL_Rect dst{ cx - side / 2, r.y + r.h - side, side, side };
 
@@ -1959,7 +1961,7 @@ void Game::renderSettingsScreen() {
     if (ui::sliderF(ren_, {rx, ry, colW, 18}, "AGENTS", ag, 50.0f, 6000.0f, in_)) s.numAgents = (int)ag;
     ry += 38;
     float bn = (float)s.numBuildings;
-    if (ui::sliderF(ren_, {rx, ry, colW, 18}, "BUILDINGS", bn, 8.0f, 160.0f, in_)) s.numBuildings = (int)bn;
+    if (ui::sliderF(ren_, {rx, ry, colW, 18}, "BUILDINGS", bn, 8.0f, 600.0f, in_)) s.numBuildings = (int)bn;
     ry += 38;
     float cd = (float)s.cityDepth;
     if (ui::sliderF(ren_, {rx, ry, colW, 18}, "CITY DEPTH 1-10", cd, 1.0f, 10.0f, in_))

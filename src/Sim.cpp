@@ -81,24 +81,20 @@ void World::regenerateAgentsOnly() {
     addLog("Population respawned.", {180, 220, 255, 255});
 }
 
-// Weighted pick of a non-civic building type from the configured mix. The four
-// settings are treated as weights (normalized here), so the relative ratios are
-// what matter — the sliders never need to sum to exactly 100.
-static BType pickWeightedType() {
+// Weighted pick among the three *buildable* types (no park, no civic). Used for
+// the individual structures inside a building cluster.
+static BType pickClusterType() {
     const auto& s = settings();
     int rp = std::max(0, s.buildingResidentialPct);
     int op = std::max(0, s.buildingOfficePct);
     int ip = std::max(0, s.buildingIndustryPct);
-    int pp = std::max(0, s.buildingParkPct);
-    int sum = rp + op + ip + pp;
-    if (sum <= 0) return BType::Residential;     // degenerate: all weights zero
+    int sum = rp + op + ip;
+    if (sum <= 0) return BType::Residential;
     int roll = irand(0, sum - 1);
     if (roll < rp) return BType::Residential;
     roll -= rp;
     if (roll < op) return BType::Office;
-    roll -= op;
-    if (roll < ip) return BType::Industry;
-    return BType::Park;
+    return BType::Industry;
 }
 
 void World::generateBuildings() {
@@ -107,18 +103,20 @@ void World::generateBuildings() {
     int n = std::max(4, s.numBuildings);
     float step = roadSpacingForDepth(s.cityDepth);
 
-    // Build the list of city blocks (the squares between roads) and use them as
-    // building plots, so structures cluster into neighborhoods framed by roads
-    // instead of floating randomly. Higher City Depth => smaller world + tighter
-    // grid => the same building count packs into a compact, lively city.
+    // Each city block (the square between roads) is a plot. Instead of dropping
+    // one big building per plot (which read as a sterile grid of cubes floating
+    // in grass), every developed plot gets a *cluster* of several small
+    // buildings packed together. Their fixed-size sprites overlap and depth-sort
+    // by base Y into a little skyline, so neighborhoods look hand-built and
+    // dense — exactly like a real downtown rather than one-cube-per-square.
     struct Plot { float x, y, w, h; };
     std::vector<Plot> plots;
-    const float inset = 20.0f;   // clear the asphalt (road tile half-width)
+    const float inset = 14.0f;   // clear the asphalt (road tile half-width)
     for (float by = step; by + step <= s.worldH; by += step) {
         for (float bx = step; bx + step <= s.worldW; bx += step) {
             float px = bx + inset, py = by + inset;
             float pw = step - inset * 2.0f, ph = step - inset * 2.0f;
-            if (pw < 44.0f || ph < 44.0f) continue;
+            if (pw < 50.0f || ph < 50.0f) continue;
             plots.push_back({px, py, pw, ph});
         }
     }
@@ -126,57 +124,90 @@ void World::generateBuildings() {
     for (int i = (int)plots.size() - 1; i > 0; --i)
         std::swap(plots[i], plots[irand(0, i)]);
 
-    auto placeInPlot = [&](Building& b, const Plot& p) {
-        // Footprint fits the plot (the visible sprite is a fixed size; footprint
-        // only drives collision/occlusion, so keeping it inside the block keeps
-        // the streets walkable). Centered with a little jitter for variety.
-        b.w = clampf(frand(90.0f, 240.0f), 48.0f, p.w);
-        b.h = clampf(frand(90.0f, 240.0f), 48.0f, p.h);
-        float jx = (p.w - b.w) * 0.5f, jy = (p.h - b.h) * 0.5f;
-        b.pos.x = p.x + clampf(jx + frand(-jx, jx) * 0.4f, 0.0f, p.w - b.w);
-        b.pos.y = p.y + clampf(jy + frand(-jy, jy) * 0.4f, 0.0f, p.h - b.h);
-    };
-
-    // First two structures are the civic anchors (always present); the rest
-    // follow the configured type mix.
-    auto finishBuilding = [&](Building& b, int placedIdx) {
-        if (placedIdx == 0)      b.type = BType::PoliceStation;
-        else if (placedIdx == 1) b.type = BType::Hospital;
-        else                     b.type = pickWeightedType();
+    auto finishMeta = [&](Building& b) {
         b.variant = irand(0, 3);
         b.windowSeed = (unsigned)irand(1, 1 << 30);
     };
 
+    // Park share of the mix => how often a developed block is left as an open
+    // green park (a single lawn footprint) instead of a building cluster.
+    int rp = std::max(0, s.buildingResidentialPct);
+    int op = std::max(0, s.buildingOfficePct);
+    int ip = std::max(0, s.buildingIndustryPct);
+    int pp = std::max(0, s.buildingParkPct);
+    int mixSum = rp + op + ip + pp;
+    float parkChance = (mixSum > 0) ? (float)pp / (float)mixSum : 0.0f;
+
+    // Drop a single centered structure (civic anchor) into a plot.
+    auto placeCivic = [&](BType type, const Plot& p) {
+        Building b;
+        b.type = type;
+        b.w = clampf(58.0f, 40.0f, p.w);
+        b.h = clampf(62.0f, 40.0f, p.h);
+        b.pos.x = p.x + (p.w - b.w) * 0.5f;
+        b.pos.y = p.y + (p.h - b.h) * 0.5f;
+        finishMeta(b);
+        buildings.push_back(b);
+    };
+
     if (plots.empty()) {
-        // Degenerate fallback (tiny world): random scatter, no blocks to gap.
+        // Degenerate fallback (tiny world): random scatter of small buildings.
         for (int i = 0; i < n; ++i) {
             Building b;
-            b.w = frand(90.0f, 240.0f);
-            b.h = frand(90.0f, 240.0f);
-            b.pos.x = frand(160.0f, std::max(161.0f, s.worldW - 160.0f - b.w));
-            b.pos.y = frand(160.0f, std::max(161.0f, s.worldH - 160.0f - b.h));
-            finishBuilding(b, i);
+            b.w = frand(36.0f, 58.0f); b.h = frand(44.0f, 70.0f);
+            b.pos.x = frand(110.0f, std::max(111.0f, s.worldW - 110.0f - b.w));
+            b.pos.y = frand(110.0f, std::max(111.0f, s.worldH - 110.0f - b.h));
+            b.type = (i == 0) ? BType::PoliceStation
+                   : (i == 1) ? BType::Hospital : pickClusterType();
+            finishMeta(b);
             buildings.push_back(b);
         }
         return;
     }
 
-    // ---- Organic, probability-based placement ----
-    // Walk the shuffled plots once. Each lot is filled only with probability
-    // `fillProb` (from City Depth): low depth leaves many empty lots (scattered
-    // neighborhoods + natural gaps), high depth packs the city. The two civic
-    // anchors are force-placed first so they always exist; then we place up to
-    // `numBuildings` total. Because the plots are shuffled, the gaps land in
-    // random spots instead of forming a sterile, perfect lattice.
     const float fillProb = fillProbabilityForDepth(s.cityDepth);
-    int placed = 0;
-    for (size_t pi = 0; pi < plots.size() && placed < n; ++pi) {
-        if (placed >= 2 && chance01() >= fillProb) continue;  // leave this lot empty
-        Building b;
-        placeInPlot(b, plots[pi]);
-        finishBuilding(b, placed);
-        buildings.push_back(b);
-        ++placed;
+    size_t pi = 0;
+
+    // Civic anchors first (always present) on the first two plots.
+    if (pi < plots.size()) placeCivic(BType::PoliceStation, plots[pi++]);
+    if (pi < plots.size()) placeCivic(BType::Hospital,      plots[pi++]);
+
+    // Remaining plots: leave empty (gap), make an open park, or grow a cluster.
+    for (; pi < plots.size() && (int)buildings.size() < n; ++pi) {
+        if (chance01() >= fillProb) continue;        // open lot -> natural gap
+        const Plot& p = plots[pi];
+
+        if (chance01() < parkChance) {
+            // Whole-block open park (lawn + decor handled in generateParkDecor).
+            Building b;
+            b.type = BType::Park;
+            b.w = p.w; b.h = p.h;
+            b.pos = { p.x, p.y };
+            finishMeta(b);
+            buildings.push_back(b);
+            continue;
+        }
+
+        // Building cluster: pack several small structures into a sub-area of the
+        // block so their sprites overlap edge-to-edge into a solid skyline mass,
+        // leaving open ground around it. Denser cities (higher City Depth) pack
+        // more buildings per block.
+        float cw = p.w * frand(0.6f, 0.85f);
+        float ch = p.h * frand(0.6f, 0.85f);
+        float cx0 = p.x + frand(0.0f, std::max(0.0f, p.w - cw));
+        float cy0 = p.y + frand(0.0f, std::max(0.0f, p.h - ch));
+        int hi  = 4 + s.cityDepth / 2;                       // depth1=4 .. depth10=9
+        int cnt = irand(std::max(3, hi - 3), hi);
+        for (int k = 0; k < cnt && (int)buildings.size() < n; ++k) {
+            Building b;
+            b.type = pickClusterType();
+            b.w = frand(30.0f, 52.0f);
+            b.h = frand(40.0f, 66.0f);
+            b.pos.x = frand(cx0, std::max(cx0, cx0 + cw - b.w));
+            b.pos.y = frand(cy0, std::max(cy0, cy0 + ch - b.h));
+            finishMeta(b);
+            buildings.push_back(b);
+        }
     }
 }
 

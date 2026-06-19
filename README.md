@@ -29,11 +29,13 @@ look**, so the game never fails to start.
 - **Depth-sorted world** — buildings, trees, agents, and traffic are painted
   back-to-front by base Y, and a building turns semi-transparent (x-ray) when an
   agent walks behind it. Zoom no longer disturbs the window pattern.
-- **Organic, living cities** — a **City Depth** slider (1–10) controls density:
-  higher depth shrinks the world, tightens the road grid, and fills more blocks
-  for a dense downtown; lower depth leaves natural gaps and empty lots so the
-  city looks varied and hand-laid instead of a sterile, perfect grid. Cars,
-  luxury cars, and trucks drive the streets as cosmetic background traffic.
+- **Organic, living cities** — buildings are small and grow in tight **clusters**
+  (a packed little skyline per city block, with open ground and empty lots
+  between) instead of one cube per square, so neighborhoods look hand-built. A
+  **City Depth** slider (1–10) controls density: higher depth shrinks the world,
+  tightens the road grid, and packs more buildings per block for a dense
+  downtown; lower depth spreads scattered, low-rise neighborhoods. Cars, luxury
+  cars, and trucks drive the streets as cosmetic background traffic.
 - **Custom building placement** — pick **HOUSE / OFFICE / FACTORY / PARK** from
   the sidebar and click the map to place your own buildings (free in Sandbox,
   costs budget in Survival), and tune the auto-generated mix with the Settings
