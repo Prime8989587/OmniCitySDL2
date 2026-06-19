@@ -8,7 +8,7 @@ healers while the simulation plays out.
 This is a full redesign of the original single-file `cristiverse_sdl2.cpp`
 prototype into a modular, polished, downloadable game. It uses **pure SDL2** —
 no SDL_ttf / SDL_image / SDL_mixer. The bitmap font and sound effects are
-generated procedurally; buildings, roads, and trees are drawn from small
+generated procedurally; buildings and trees are drawn from small
 **pixel-art sprites** in [`assets/`](assets) (PNG decoded with the vendored
 single-header `stb_image`, so there is still no SDL_image dependency). If the
 sprite art is missing the renderer **falls back to the original procedural
@@ -24,21 +24,24 @@ look**, so the game never fails to start.
   audio, and game-state are cleanly separated.
 - **Retro pixel-art graphics** — a cohesive blocky aesthetic: chunky buildings
   with flat roofs and big lit windows, little pixel-figure citizens, blocky trees
-  (deciduous, pine, willow, dead), a checkerboard grass ground, dirt roads, park
+  (deciduous, pine, willow, dead), a checkerboard grass ground, park
   ponds and flower patches, cast shadows, factory smoke, and a day/night cycle.
 - **Depth-sorted world** — buildings, trees, agents, and traffic are painted
   back-to-front by base Y, and a building turns semi-transparent (x-ray) when an
   agent walks behind it. Zoom no longer disturbs the window pattern.
-- **Organic, living cities** — buildings are small and grow in tight **clusters**
-  (a packed little skyline per city block, with open ground and empty lots
-  between) instead of one cube per square, so neighborhoods look hand-built. A
-  **City Depth** slider (1–10) controls density: higher depth shrinks the world,
-  tightens the road grid, and packs more buildings per block for a dense
-  downtown; lower depth spreads scattered, low-rise neighborhoods. Cars, luxury
-  cars, and trucks drive the streets as cosmetic background traffic.
-- **Custom building placement** — pick **HOUSE / OFFICE / FACTORY / PARK** from
-  the sidebar and click the map to place your own buildings (free in Sandbox,
-  costs budget in Survival), and tune the auto-generated mix with the Settings
+- **Organic, living cities** — every building occupies a small fixed **footprint**
+  (a 4×height base: House 4×13, Apartment/Office 4×16, Factory 4×20, Park 6×6)
+  while its taller sprite overlaps its neighbours into a hand-built skyline.
+  Buildings are scattered with collision testing so their footprints **never
+  overlap**. A **City Depth** slider (1–10) controls density: higher depth packs
+  more buildings into a smaller world for a dense downtown; lower depth spreads a
+  sparse, low-rise town. Cars, luxury cars, and trucks drive as cosmetic traffic.
+- **Freeform building placement** — pick **HOUSE / OFFICE / FACTORY / PARK** from
+  the sidebar and click the map to place your own buildings anywhere (free in
+  Sandbox, costs budget in Survival). In Sandbox a green/red preview shows valid
+  placement, a vertical ruler grid (**G**) reflects the selected footprint width,
+  you can **drag buildings to move** them, **undo/redo** (Ctrl+Z/Y) and
+  **save/load** layouts (Ctrl+S/L). Tune the auto-generated mix with the Settings
   **BUILDING MIX** sliders (residential / office / industry / park ratios).
 - **Day/night life** — a 24-hour clock drives window colour (dark blue at night,
   white-yellow at midday, orange at dusk); civilians walk home and sleep indoors

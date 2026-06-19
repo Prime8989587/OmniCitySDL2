@@ -22,7 +22,7 @@ a Gradle/NDK build wrapper are Android‑specific.
 On Android the game starts with mobile‑tuned defaults chosen for a steady
 **60 fps on low‑end devices (~8 GB RAM, weak GPU)**:
 
-- `numAgents = 700`, `numBuildings = 44`, `numTrees = 80`
+- `numAgents = 700`, `numTrees = 80` (building count derives from City Depth)
 - `worldW = worldH = 2000`
 - vsync on, fullscreen on
 

@@ -45,7 +45,6 @@ void Settings::loadFromFile(const std::string& path) {
             else if (key == "worldW")       worldW       = std::stof(val);
             else if (key == "worldH")       worldH       = std::stof(val);
             else if (key == "numAgents")    numAgents    = std::stoi(val);
-            else if (key == "numBuildings") numBuildings = std::stoi(val);
             else if (key == "numTrees")     numTrees     = std::stoi(val);
             else if (key == "cityDepth")    cityDepth    = std::max(1, std::min(10, std::stoi(val)));
             else if (key == "buildingResidentialPct") buildingResidentialPct = std::max(0, std::min(100, std::stoi(val)));
@@ -78,7 +77,6 @@ void Settings::saveToFile(const std::string& path) const {
     out << "worldW="       << worldW       << "\n";
     out << "worldH="       << worldH       << "\n";
     out << "numAgents="    << numAgents    << "\n";
-    out << "numBuildings=" << numBuildings << "\n";
     out << "numTrees="     << numTrees     << "\n";
     out << "cityDepth="    << cityDepth    << "\n";
     out << "buildingResidentialPct=" << buildingResidentialPct << "\n";

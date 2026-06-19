@@ -158,8 +158,9 @@ private:
     // ---- helpers ----
     void startNewGame();
     void startSandbox();
-    // Sandbox placement editing (freeform vertical-grid)
-    bool snapBuildingPosition(float wx, float wy, int skipBuildingIdx, Vec2& out);
+    // Sandbox placement editing (free placement + collision)
+    bool validateBuildingPlacement(float wx, float wy, BType type, int skipIdx,
+                                   Vec2& outPos, float& outW, float& outH);
     bool buildingsOverlap(const Building& a, const Building& b) const;
     void pushUndoSnapshot();
     void undoLastAction();

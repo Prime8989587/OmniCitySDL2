@@ -32,6 +32,13 @@ namespace econ {
 // The upper part is walkable "behind" the building, enabling occlusion x-ray.
 constexpr float kBuildingSolidFrac = 0.60f;
 
+// World units per spec "pixel". Spec footprints: width 4; House 13, Apt 16,
+// Factory 20, Park 6. Footprints are FIXED per type (no random size) so the
+// math is exact and placement packs cleanly without overlap.
+constexpr float kFootprintUnit = 4.0f;
+// Returns the fixed ground footprint (w,h) a building of this type occupies.
+void buildingFootprint(BType t, float& w, float& h);
+
 struct Agent {
     int   id = 0;
     Vec2  pos, vel;

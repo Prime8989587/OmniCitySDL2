@@ -107,7 +107,6 @@ void Game::setupMobile() {
     // Defaults tuned for a steady 60fps on low-end phones (weak GPU/CPU).
     auto& s = settings();
     s.numAgents    = 700;
-    s.numBuildings = 44;
     s.numTrees     = 80;
     s.worldW       = 2000.0f;
     s.worldH       = 2000.0f;
@@ -607,32 +606,25 @@ void Game::placeBuildingAt(int sx, int sy) {
     }
 
     float wx, wy; view_.screenToWorld(sx, sy, wx, wy);
-    Vec2 snappedPos;
 
-    // Use snapping in Sandbox mode, traditional clamping in Survival
+    // Fixed per-type footprint (deterministic — no random size).
+    float bw, bh; buildingFootprint(type, bw, bh);
+    float px, py;
+
     if (mode_ == GameMode::Sandbox) {
-        if (!snapBuildingPosition(wx, wy, -1, snappedPos)) {
+        // Free placement centered on cursor, rejected only on overlap / bounds.
+        Vec2 outPos;
+        if (!validateBuildingPlacement(wx, wy, type, -1, outPos, bw, bh)) {
             toast("Cannot place here"); audio_.alarm(); return;
         }
-        wx = snappedPos.x;
-        wy = snappedPos.y;
-    }
-
-    // Parks are open green plots, so give them a wider footprint; buildings use
-    // the same small footprint as the auto-generated clusters.
-    float bw = (type == BType::Park) ? frand(120.0f, 170.0f) : frand(34.0f, 56.0f);
-    float bh = (type == BType::Park) ? frand(120.0f, 170.0f) : frand(44.0f, 70.0f);
-    float px = mode_ == GameMode::Sandbox ? wx : clampf(wx - bw * 0.5f, 8.0f, s.worldW - bw - 8.0f);
-    float py = mode_ == GameMode::Sandbox ? wy : clampf(wy - bh * 0.5f, 8.0f, s.worldH - bh - 8.0f);
-
-    // In Survival mode, check collision the old way (for backward compatibility)
-    if (mode_ == GameMode::Survival && type != BType::Park) {
-        float nSolidTop = py + bh * (1.0f - kBuildingSolidFrac);
+        px = outPos.x; py = outPos.y;
+    } else {
+        // Survival: clamp into bounds and reject overlap of solid footprints.
+        px = clampf(wx - bw * 0.5f, 8.0f, s.worldW - bw - 8.0f);
+        py = clampf(wy - bh * 0.5f, 8.0f, s.worldH - bh - 8.0f);
         for (const auto& ob : world_.buildings) {
-            if (ob.type == BType::Park) continue;
-            float oSolidTop = ob.pos.y + ob.h * (1.0f - kBuildingSolidFrac);
             bool overlap = px < ob.pos.x + ob.w && px + bw > ob.pos.x &&
-                           nSolidTop < ob.pos.y + ob.h && py + bh > oSolidTop;
+                           py < ob.pos.y + ob.h && py + bh > ob.pos.y;
             if (overlap) { toast("Too close to another building!"); audio_.alarm(); return; }
         }
     }
@@ -656,54 +648,35 @@ void Game::placeBuildingAt(int sx, int sy) {
 }
 
 // =====================================================================
-// Sandbox Placement Editing (Freeform Vertical-Grid)
+// Sandbox Placement Editing (free placement + footprint collision)
 // =====================================================================
 
 bool Game::buildingsOverlap(const Building& a, const Building& b) const {
-    // AABB collision test; parks are non-solid
-    if (a.type == BType::Park || b.type == BType::Park) return false;
+    // Pure AABB footprint test — nothing may overlap (parks included) so the
+    // editor packs cleanly.
     return !(a.pos.x + a.w <= b.pos.x || b.pos.x + b.w <= a.pos.x ||
              a.pos.y + a.h <= b.pos.y || b.pos.y + b.h <= a.pos.y);
 }
 
-bool Game::snapBuildingPosition(float wx, float wy, int skipBuildingIdx, Vec2& out) {
+// Validate a free (un-snapped) placement of `type` centered on the cursor.
+// Writes the resulting footprint pos/size; returns false if it would leave the
+// world or overlap an existing footprint (skipIdx is ignored, for dragging).
+bool Game::validateBuildingPlacement(float wx, float wy, BType type, int skipIdx,
+                                     Vec2& outPos, float& outW, float& outH) {
     auto& s = settings();
-    const float SNAP_QUANTUM = 4.0f;  // 4-unit columns on X-axis
+    buildingFootprint(type, outW, outH);
+    outPos = { wx - outW * 0.5f, wy - outH * 0.5f };   // center on cursor, free
 
-    // Snap X to 4-unit column, free Y
-    out.x = std::floor(wx / SNAP_QUANTUM) * SNAP_QUANTUM;
-    out.y = wy;
-
-    // Get the building being placed (which tool is active determines footprint)
-    BType type; float bw, bh;
-    switch (tool_) {
-        case Tool::BuildResidential: type = BType::Residential; bw = frand(34.0f, 56.0f); bh = frand(44.0f, 70.0f); break;
-        case Tool::BuildOffice:      type = BType::Office;      bw = frand(34.0f, 56.0f); bh = frand(44.0f, 70.0f); break;
-        case Tool::BuildIndustry:    type = BType::Industry;    bw = frand(34.0f, 56.0f); bh = frand(44.0f, 70.0f); break;
-        case Tool::BuildPark:        type = BType::Park;        bw = frand(120.0f, 170.0f); bh = frand(120.0f, 170.0f); break;
-        default: return false;
-    }
-
-    // Bounds check
-    if (out.x < 8.0f || out.x + bw > s.worldW - 8.0f ||
-        out.y < 8.0f || out.y + bh > s.worldH - 8.0f) {
+    if (outPos.x < 8.0f || outPos.x + outW > s.worldW - 8.0f ||
+        outPos.y < 8.0f || outPos.y + outH > s.worldH - 8.0f)
         return false;
-    }
 
-    // Collision check
-    Building testBuilding;
-    testBuilding.pos = out;
-    testBuilding.w = bw;
-    testBuilding.h = bh;
-    testBuilding.type = type;
-
+    Building test;
+    test.pos = outPos; test.w = outW; test.h = outH; test.type = type;
     for (size_t i = 0; i < world_.buildings.size(); ++i) {
-        if ((int)i == skipBuildingIdx) continue;  // skip the building being dragged
-        if (buildingsOverlap(testBuilding, world_.buildings[i])) {
-            return false;
-        }
+        if ((int)i == skipIdx) continue;              // skip the dragged building
+        if (buildingsOverlap(test, world_.buildings[i])) return false;
     }
-
     return true;
 }
 
@@ -843,11 +816,14 @@ void Game::update(float dt) {
         if (ks[SDL_SCANCODE_A] || ks[SDL_SCANCODE_LEFT])  view_.cam.tx -= camSpeed;
         if (ks[SDL_SCANCODE_D] || ks[SDL_SCANCODE_RIGHT]) view_.cam.tx += camSpeed;
 
-        // Sandbox placement editing: handle drag-to-move
+        // Sandbox placement editing: handle drag-to-move (free, collision-checked)
         if (mode_ == GameMode::Sandbox && inEditMode_ && dragBuildingIdx_ >= 0) {
             float wx, wy;
             view_.screenToWorld(in_.mouseX, in_.mouseY, wx, wy);
-            bool valid = snapBuildingPosition(wx, wy, dragBuildingIdx_, previewPos_);
+            BType dt2 = world_.buildings[dragBuildingIdx_].type;
+            float pw, ph;
+            bool valid = validateBuildingPlacement(wx, wy, dt2, dragBuildingIdx_,
+                                                   previewPos_, pw, ph);
             previewValid_ = valid;
 
             // Release: finalize or revert
@@ -1197,27 +1173,9 @@ void Game::renderGround() {
         }
     }
 
-    // Road grid: tiled asphalt sprites when the art is present; otherwise the
-    // original thick dirt paths.
-    if (!renderRoadSprites()) {
-        const float step = roadSpacingForDepth(settings().cityDepth);
-        SDL_Color road = scaleColor({122, 116, 92, 255}, b);
-        int rw = std::max(1, (int)(6.0f * view_.cam.zoom));
-        float startX = std::floor(wx0 / step) * step;
-        float startY = std::floor(wy0 / step) * step;
-        for (float x = startX; x <= wx1; x += step) {
-            int sx, sy, sx2, sy2;
-            view_.worldToScreen(x, wy0, sx, sy);
-            view_.worldToScreen(x, wy1, sx2, sy2);
-            draw::thickLine(ren_, sx, view_.viewY, sx2, view_.viewY + view_.viewH, rw, road);
-        }
-        for (float y = startY; y <= wy1; y += step) {
-            int sx, sy, sx2, sy2;
-            view_.worldToScreen(wx0, y, sx, sy);
-            view_.worldToScreen(wx1, y, sx2, sy2);
-            draw::thickLine(ren_, view_.viewX, sy, view_.viewX + view_.viewW, sy2, rw, road);
-        }
-    }
+    // Roads are intentionally not drawn: they served no gameplay purpose and
+    // cluttered the city. The road grid data still exists (buildRoadNetwork) so
+    // cosmetic vehicles can drive, but nothing road-related is rendered here.
 
     // World border (chunky outline).
     SDL_Rect border;
@@ -1340,8 +1298,19 @@ void Game::renderGrid() {
     view_.screenToWorld(view_.viewX, view_.viewY, wx0, wy0);
     view_.screenToWorld(view_.viewX + view_.viewW, view_.viewY + view_.viewH, wx1, wy1);
 
-    // Vertical columns only (4-unit spacing for X-axis snapping)
-    const float columnStep = 4.0f;
+    // Vertical reference columns only, spaced at the selected building's footprint
+    // width (the "4" in 4xH). The grid is a visual ruler — placement is free, so
+    // these lines never constrain where a building goes. No horizontal lines
+    // because Y is freeform.
+    BType selType = BType::Residential;
+    switch (tool_) {
+        case Tool::BuildOffice:   selType = BType::Office;   break;
+        case Tool::BuildIndustry: selType = BType::Industry; break;
+        case Tool::BuildPark:     selType = BType::Park;     break;
+        default:                  selType = BType::Residential; break;
+    }
+    float fw, fh; buildingFootprint(selType, fw, fh);
+    float columnStep = std::max(4.0f, fw);
     SDL_Color columnColor{90, 150, 200, 80};
     float startX = std::floor(wx0 / columnStep) * columnStep;
     for (float x = startX; x <= wx1; x += columnStep) {
@@ -1350,7 +1319,6 @@ void Game::renderGrid() {
         view_.worldToScreen(x, wy1, sx2, sy2);
         draw::line(ren_, sx, view_.viewY, sx2, view_.viewY + view_.viewH, columnColor);
     }
-    // No horizontal lines (Y is freeform)
 }
 
 // Pick the player-supplied building sprite for the current time of day and a
@@ -2221,9 +2189,6 @@ void Game::renderSettingsScreen() {
     font::draw(ren_, "WORLD (APPLY TO REBUILD)", rx, ry, 1, ui::textDim()); ry += 22;
     float ag = (float)s.numAgents;
     if (ui::sliderF(ren_, {rx, ry, colW, 18}, "AGENTS", ag, 50.0f, 6000.0f, in_)) s.numAgents = (int)ag;
-    ry += 38;
-    float bn = (float)s.numBuildings;
-    if (ui::sliderF(ren_, {rx, ry, colW, 18}, "BUILDINGS", bn, 8.0f, 600.0f, in_)) s.numBuildings = (int)bn;
     ry += 38;
     float cd = (float)s.cityDepth;
     if (ui::sliderF(ren_, {rx, ry, colW, 18}, "CITY DEPTH 1-10", cd, 1.0f, 10.0f, in_))

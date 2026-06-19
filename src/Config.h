@@ -17,7 +17,6 @@ struct Settings {
     float worldH       = 2400.0f;
 
     int   numAgents    = 1500;      // can push to ~10000
-    int   numBuildings = 180;       // total small buildings (clustered into blocks)
     int   numTrees     = 140;       // scattered decorative trees
 
     // City density: 1 = sparse/spread out, 10 = small & tightly packed. Drives
