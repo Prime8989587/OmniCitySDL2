@@ -97,6 +97,14 @@ private:
     float fps_ = 0.0f;                 // smoothed frames-per-second
     int   hoverBuilding_ = -1;         // building under cursor (tooltip)
 
+    // Sandbox placement editing state (freeform vertical-grid)
+    std::vector<std::vector<Building>> editBackup_;      // undo/redo snapshots
+    int   editHistoryIndex_ = 0;                         // current position in history
+    int   dragBuildingIdx_ = -1;                         // building being dragged, or -1
+    bool  inEditMode_ = false;                           // true while dragging/previewing
+    Vec2  previewPos_;                                   // snapped position under cursor
+    bool  previewValid_ = true;                          // collision-free placement
+
     // ---- lifecycle ----
     void handleEvents();
     void update(float dt);
@@ -150,6 +158,14 @@ private:
     // ---- helpers ----
     void startNewGame();
     void startSandbox();
+    // Sandbox placement editing (freeform vertical-grid)
+    bool snapBuildingPosition(float wx, float wy, int skipBuildingIdx, Vec2& out);
+    bool buildingsOverlap(const Building& a, const Building& b) const;
+    void pushUndoSnapshot();
+    void undoLastAction();
+    void redoLastAction();
+    bool saveLayout(const std::string& filename);
+    bool loadLayout(const std::string& filename);
     void adjustWorldForDepth();        // set world size from settings().cityDepth
     void setSpeed(int idx);
     void deployAt(int sx, int sy);

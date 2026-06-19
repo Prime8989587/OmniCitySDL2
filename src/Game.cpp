@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cmath>
 #include <algorithm>
+#include <fstream>
 
 namespace cv {
 
@@ -296,6 +297,26 @@ void Game::handleEvents() {
                     if (k == SDLK_7) tool_ = (tool_ == Tool::SpawnGang)     ? Tool::None : Tool::SpawnGang;
                     if (k == SDLK_g) { showGrid_ = !showGrid_; }
                     if (k == SDLK_n) { world_.regenerateAgentsOnly(); selectedId_ = -1; toast("Population respawned"); }
+                    // Placement editing shortcuts
+                    const Uint8* ks2 = SDL_GetKeyboardState(nullptr);
+                    if (k == SDLK_z && (ks2[SDL_SCANCODE_LCTRL] || ks2[SDL_SCANCODE_RCTRL])) undoLastAction();
+                    if (k == SDLK_y && (ks2[SDL_SCANCODE_LCTRL] || ks2[SDL_SCANCODE_RCTRL])) redoLastAction();
+                    if (k == SDLK_s && (ks2[SDL_SCANCODE_LCTRL] || ks2[SDL_SCANCODE_RCTRL])) {
+                        std::string path = "layout.json";
+#ifdef __ANDROID__
+                        char* pref = SDL_GetPrefPath("CristiVerse", "CristiVerse");
+                        if (pref) { path = std::string(pref) + "layout.json"; SDL_free(pref); }
+#endif
+                        saveLayout(path);
+                    }
+                    if (k == SDLK_l && (ks2[SDL_SCANCODE_LCTRL] || ks2[SDL_SCANCODE_RCTRL])) {
+                        std::string path = "layout.json";
+#ifdef __ANDROID__
+                        char* pref = SDL_GetPrefPath("CristiVerse", "CristiVerse");
+                        if (pref) { path = std::string(pref) + "layout.json"; SDL_free(pref); }
+#endif
+                        loadLayout(path);
+                    }
                 }
             } else if (state_ == GState::Paused) {
                 if (k == SDLK_SPACE) state_ = GState::Playing;
@@ -437,6 +458,24 @@ void Game::worldClickAt(int sx, int sy, float pickPx) {
         deployAt(sx, sy);
     } else {
         float wx, wy; view_.screenToWorld(sx, sy, wx, wy);
+        // In Sandbox mode, check if clicking on a building to drag it
+        if (mode_ == GameMode::Sandbox) {
+            int buildingIdx = -1;
+            for (int i = (int)world_.buildings.size() - 1; i >= 0; --i) {
+                const Building& b = world_.buildings[i];
+                if (wx >= b.pos.x && wx < b.pos.x + b.w &&
+                    wy >= b.pos.y && wy < b.pos.y + b.h) {
+                    buildingIdx = i;
+                    break;  // top building (last in list)
+                }
+            }
+            if (buildingIdx >= 0) {
+                dragBuildingIdx_ = buildingIdx;
+                inEditMode_ = true;
+                previewPos_ = world_.buildings[buildingIdx].pos;
+                return;
+            }
+        }
         int id = world_.pickAgentNear(wx, wy, pickPx / view_.cam.zoom);
         selectedId_ = id;
         if (id >= 0) audio_.select();
@@ -568,15 +607,26 @@ void Game::placeBuildingAt(int sx, int sy) {
     }
 
     float wx, wy; view_.screenToWorld(sx, sy, wx, wy);
+    Vec2 snappedPos;
+
+    // Use snapping in Sandbox mode, traditional clamping in Survival
+    if (mode_ == GameMode::Sandbox) {
+        if (!snapBuildingPosition(wx, wy, -1, snappedPos)) {
+            toast("Cannot place here"); audio_.alarm(); return;
+        }
+        wx = snappedPos.x;
+        wy = snappedPos.y;
+    }
+
     // Parks are open green plots, so give them a wider footprint; buildings use
     // the same small footprint as the auto-generated clusters.
     float bw = (type == BType::Park) ? frand(120.0f, 170.0f) : frand(34.0f, 56.0f);
     float bh = (type == BType::Park) ? frand(120.0f, 170.0f) : frand(44.0f, 70.0f);
-    float px = clampf(wx - bw * 0.5f, 8.0f, s.worldW - bw - 8.0f);
-    float py = clampf(wy - bh * 0.5f, 8.0f, s.worldH - bh - 8.0f);
+    float px = mode_ == GameMode::Sandbox ? wx : clampf(wx - bw * 0.5f, 8.0f, s.worldW - bw - 8.0f);
+    float py = mode_ == GameMode::Sandbox ? wy : clampf(wy - bh * 0.5f, 8.0f, s.worldH - bh - 8.0f);
 
-    // Reject overlap with the solid (lower) part of any other solid building.
-    if (type != BType::Park) {
+    // In Survival mode, check collision the old way (for backward compatibility)
+    if (mode_ == GameMode::Survival && type != BType::Park) {
         float nSolidTop = py + bh * (1.0f - kBuildingSolidFrac);
         for (const auto& ob : world_.buildings) {
             if (ob.type == BType::Park) continue;
@@ -593,12 +643,171 @@ void Game::placeBuildingAt(int sx, int sy) {
     b.type = type;
     b.variant = irand(0, 3);
     b.windowSeed = (unsigned)irand(1, 1 << 30);
+
+    // Push undo snapshot before adding building (in Sandbox only)
+    if (mode_ == GameMode::Sandbox) pushUndoSnapshot();
+
     world_.buildings.push_back(b);
     budget_ -= cost;
     audio_.deploy();
     world_.spawnBurst({ wx, wy }, {200, 210, 225, 255}, 14, 70.0f);
     world_.addLog(std::string("Built ") + btypeName(type) + ".", {200, 220, 255, 255});
     toast(std::string("Built ") + btypeName(type));
+}
+
+// =====================================================================
+// Sandbox Placement Editing (Freeform Vertical-Grid)
+// =====================================================================
+
+bool Game::buildingsOverlap(const Building& a, const Building& b) const {
+    // AABB collision test; parks are non-solid
+    if (a.type == BType::Park || b.type == BType::Park) return false;
+    return !(a.pos.x + a.w <= b.pos.x || b.pos.x + b.w <= a.pos.x ||
+             a.pos.y + a.h <= b.pos.y || b.pos.y + b.h <= a.pos.y);
+}
+
+bool Game::snapBuildingPosition(float wx, float wy, int skipBuildingIdx, Vec2& out) {
+    auto& s = settings();
+    const float SNAP_QUANTUM = 4.0f;  // 4-unit columns on X-axis
+
+    // Snap X to 4-unit column, free Y
+    out.x = std::floor(wx / SNAP_QUANTUM) * SNAP_QUANTUM;
+    out.y = wy;
+
+    // Get the building being placed (which tool is active determines footprint)
+    BType type; float bw, bh;
+    switch (tool_) {
+        case Tool::BuildResidential: type = BType::Residential; bw = frand(34.0f, 56.0f); bh = frand(44.0f, 70.0f); break;
+        case Tool::BuildOffice:      type = BType::Office;      bw = frand(34.0f, 56.0f); bh = frand(44.0f, 70.0f); break;
+        case Tool::BuildIndustry:    type = BType::Industry;    bw = frand(34.0f, 56.0f); bh = frand(44.0f, 70.0f); break;
+        case Tool::BuildPark:        type = BType::Park;        bw = frand(120.0f, 170.0f); bh = frand(120.0f, 170.0f); break;
+        default: return false;
+    }
+
+    // Bounds check
+    if (out.x < 8.0f || out.x + bw > s.worldW - 8.0f ||
+        out.y < 8.0f || out.y + bh > s.worldH - 8.0f) {
+        return false;
+    }
+
+    // Collision check
+    Building testBuilding;
+    testBuilding.pos = out;
+    testBuilding.w = bw;
+    testBuilding.h = bh;
+    testBuilding.type = type;
+
+    for (size_t i = 0; i < world_.buildings.size(); ++i) {
+        if ((int)i == skipBuildingIdx) continue;  // skip the building being dragged
+        if (buildingsOverlap(testBuilding, world_.buildings[i])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void Game::pushUndoSnapshot() {
+    editBackup_.resize(editHistoryIndex_);  // discard redo history
+    editBackup_.push_back(world_.buildings);  // snapshot current state
+    editHistoryIndex_++;
+}
+
+void Game::undoLastAction() {
+    if (editHistoryIndex_ <= 0) {
+        toast("Nothing to undo");
+        return;
+    }
+    editHistoryIndex_--;
+    world_.buildings = editBackup_[editHistoryIndex_];
+    toast("Undone");
+    audio_.click();
+}
+
+void Game::redoLastAction() {
+    if (editHistoryIndex_ >= (int)editBackup_.size()) {
+        toast("Nothing to redo");
+        return;
+    }
+    world_.buildings = editBackup_[editHistoryIndex_];
+    editHistoryIndex_++;
+    toast("Redone");
+    audio_.click();
+}
+
+bool Game::saveLayout(const std::string& filename) {
+    std::ofstream out(filename);
+    if (!out.is_open()) { toast("Save failed"); return false; }
+
+    out << "[\n";
+    for (size_t i = 0; i < world_.buildings.size(); ++i) {
+        const Building& b = world_.buildings[i];
+        out << "  {\"type\": " << (int)b.type << ", \"x\": " << b.pos.x
+            << ", \"y\": " << b.pos.y << ", \"w\": " << b.w << ", \"h\": " << b.h << "}";
+        if (i + 1 < world_.buildings.size()) out << ",";
+        out << "\n";
+    }
+    out << "]\n";
+    out.close();
+    toast("Layout saved");
+    audio_.click();
+    return true;
+}
+
+bool Game::loadLayout(const std::string& filename) {
+    std::ifstream in(filename);
+    if (!in.is_open()) { toast("Load failed"); return false; }
+
+    world_.buildings.clear();
+    std::string line, content;
+    while (std::getline(in, line)) content += line;
+    in.close();
+
+    // Manual JSON parsing (minimal, no library dependency)
+    size_t pos = content.find('[');
+    if (pos == std::string::npos) { toast("Invalid layout file"); return false; }
+
+    pos = content.find('{', pos);
+    while (pos != std::string::npos) {
+        Building b;
+        size_t end = content.find('}', pos);
+        if (end == std::string::npos) break;
+
+        std::string obj = content.substr(pos, end - pos + 1);
+
+        // Parse type
+        size_t typePos = obj.find("\"type\": ");
+        if (typePos != std::string::npos) {
+            int typeVal = std::stoi(obj.substr(typePos + 8));
+            b.type = (BType)typeVal;
+        }
+
+        // Parse x, y, w, h
+        size_t xPos = obj.find("\"x\": ");
+        if (xPos != std::string::npos) b.pos.x = std::stof(obj.substr(xPos + 5));
+
+        size_t yPos = obj.find("\"y\": ");
+        if (yPos != std::string::npos) b.pos.y = std::stof(obj.substr(yPos + 5));
+
+        size_t wPos = obj.find("\"w\": ");
+        if (wPos != std::string::npos) b.w = std::stof(obj.substr(wPos + 5));
+
+        size_t hPos = obj.find("\"h\": ");
+        if (hPos != std::string::npos) b.h = std::stof(obj.substr(hPos + 5));
+
+        b.variant = irand(0, 3);
+        b.windowSeed = (unsigned)irand(1, 1 << 30);
+        world_.buildings.push_back(b);
+
+        pos = content.find('{', end);
+    }
+
+    editHistoryIndex_ = 0;
+    editBackup_.clear();
+    pushUndoSnapshot();
+    toast("Layout loaded");
+    audio_.click();
+    return true;
 }
 
 void Game::layoutView() {
@@ -633,6 +842,29 @@ void Game::update(float dt) {
         if (ks[SDL_SCANCODE_S] || ks[SDL_SCANCODE_DOWN])  view_.cam.ty += camSpeed;
         if (ks[SDL_SCANCODE_A] || ks[SDL_SCANCODE_LEFT])  view_.cam.tx -= camSpeed;
         if (ks[SDL_SCANCODE_D] || ks[SDL_SCANCODE_RIGHT]) view_.cam.tx += camSpeed;
+
+        // Sandbox placement editing: handle drag-to-move
+        if (mode_ == GameMode::Sandbox && inEditMode_ && dragBuildingIdx_ >= 0) {
+            float wx, wy;
+            view_.screenToWorld(in_.mouseX, in_.mouseY, wx, wy);
+            bool valid = snapBuildingPosition(wx, wy, dragBuildingIdx_, previewPos_);
+            previewValid_ = valid;
+
+            // Release: finalize or revert
+            if (in_.mouseReleased) {
+                if (valid) {
+                    pushUndoSnapshot();
+                    world_.buildings[dragBuildingIdx_].pos = previewPos_;
+                    toast("Building moved");
+                    audio_.deploy();
+                } else {
+                    toast("Cannot place here");
+                    audio_.alarm();
+                }
+                dragBuildingIdx_ = -1;
+                inEditMode_ = false;
+            }
+        }
 
         // Fixed-step simulation, scaled by sim speed.
         simAccum_ += dt * simSpeed_;
@@ -882,6 +1114,18 @@ void Game::renderWorld() {
         else                   renderVehicle(world_.vehicles[it.idx]);
     }
 
+    // Sandbox placement preview (green if valid, red if invalid)
+    if (mode_ == GameMode::Sandbox && inEditMode_ && dragBuildingIdx_ >= 0) {
+        const Building& b = world_.buildings[dragBuildingIdx_];
+        SDL_Rect previewRect;
+        if (view_.worldRectToScreen(previewPos_.x, previewPos_.y, b.w, b.h, previewRect)) {
+            SDL_Color previewCol = previewValid_ ? SDL_Color{100, 200, 100, 120} : SDL_Color{200, 100, 100, 120};
+            draw::fillRect(ren_, previewRect, previewCol);
+            SDL_Color outlineCol = previewValid_ ? SDL_Color{100, 200, 100, 255} : SDL_Color{200, 100, 100, 255};
+            draw::rect(ren_, previewRect, outlineCol);
+        }
+    }
+
     renderParticles();
     renderFloats();
     renderDayNight();
@@ -1095,22 +1339,18 @@ void Game::renderGrid() {
     float wx0, wy0, wx1, wy1;
     view_.screenToWorld(view_.viewX, view_.viewY, wx0, wy0);
     view_.screenToWorld(view_.viewX + view_.viewW, view_.viewY + view_.viewH, wx1, wy1);
-    const float step = 100.0f;
-    SDL_Color g{90, 150, 200, 55};
-    float startX = std::floor(wx0 / step) * step;
-    float startY = std::floor(wy0 / step) * step;
-    for (float x = startX; x <= wx1; x += step) {
+
+    // Vertical columns only (4-unit spacing for X-axis snapping)
+    const float columnStep = 4.0f;
+    SDL_Color columnColor{90, 150, 200, 80};
+    float startX = std::floor(wx0 / columnStep) * columnStep;
+    for (float x = startX; x <= wx1; x += columnStep) {
         int sx, sy, sx2, sy2;
         view_.worldToScreen(x, wy0, sx, sy);
         view_.worldToScreen(x, wy1, sx2, sy2);
-        draw::line(ren_, sx, view_.viewY, sx2, view_.viewY + view_.viewH, g);
+        draw::line(ren_, sx, view_.viewY, sx2, view_.viewY + view_.viewH, columnColor);
     }
-    for (float y = startY; y <= wy1; y += step) {
-        int sx, sy, sx2, sy2;
-        view_.worldToScreen(wx0, y, sx, sy);
-        view_.worldToScreen(wx1, y, sx2, sy2);
-        draw::line(ren_, view_.viewX, sy, view_.viewX + view_.viewW, sy2, g);
-    }
+    // No horizontal lines (Y is freeform)
 }
 
 // Pick the player-supplied building sprite for the current time of day and a
@@ -1687,6 +1927,28 @@ void Game::renderSidebar() {
         font::draw(ren_, "TAB = CANCEL TOOL", x, y, 1, ui::accent());
     }
     y += 16;
+
+    // --- Sandbox edit controls (undo/redo/save/load) ---
+    if (sandbox) {
+        font::draw(ren_, "EDIT TOOLS", x, y, 1, ui::textDim());
+        y += 14;
+        int bw2 = (w - 8) / 2;
+        SDL_Rect undo{ x, y, bw2, 24 };
+        SDL_Rect redo{ x + bw2 + 4, y, bw2, 24 };
+        if (ui::button(ren_, undo, "UNDO (Z)", in_, {200, 150, 100, 255}, 1)) { undoLastAction(); }
+        if (ui::button(ren_, redo, "REDO (Y)", in_, {200, 150, 100, 255}, 1)) { redoLastAction(); }
+        y += 28;
+        SDL_Rect save{ x, y, bw2, 24 };
+        SDL_Rect load{ x + bw2 + 4, y, bw2, 24 };
+        std::string savePath = "layout.json";
+#ifdef __ANDROID__
+        char* pref = SDL_GetPrefPath("CristiVerse", "CristiVerse");
+        if (pref) { savePath = std::string(pref) + "layout.json"; SDL_free(pref); }
+#endif
+        if (ui::button(ren_, save, "SAVE (S)", in_, {100, 200, 150, 255}, 1)) { saveLayout(savePath); }
+        if (ui::button(ren_, load, "LOAD (L)", in_, {100, 200, 150, 255}, 1)) { loadLayout(savePath); }
+        y += 28;
+    }
 
     // --- Speed controls ---
     font::draw(ren_, "SIM SPEED", x, y, 1, ui::textDim()); y += 14;
