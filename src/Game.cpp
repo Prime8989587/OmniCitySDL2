@@ -1366,14 +1366,23 @@ void Game::renderBuilding(const Building& b, Uint8 alpha) {
     // packs into one block and overlaps into a skyline.
     if (SDL_Texture* tex = buildingTexture(b)) {
         // Buildings are deliberately small so several pack into one block and
-        // their sprites overlap into a skyline (clusters, not lone cubes). A
-        // gentle deterministic per-building scale (from windowSeed) adds height
-        // variety to the skyline without the old "every building a different
-        // random size" inconsistency.
-        static constexpr float kBuildingSpriteWorld = 58.0f;   // world units, base size
-        float vary = 0.86f + (float)(b.windowSeed % 5) * 0.075f; // 0.86 .. 1.16
+        // their sprites overlap into a skyline (clusters, not lone cubes). The
+        // sprite size is FIXED per building TYPE — every house renders at one
+        // size, every apartment/office at another, every factory at another —
+        // so a given type is always visually identical (no per-instance random
+        // scaling). Taller types get a larger sprite so the skyline still reads
+        // as a real mix of low houses and tall towers.
+        float spriteWorld;
+        switch (b.type) {
+            case BType::Residential:   spriteWorld = 44.0f; break;  // houses: low-rise
+            case BType::Office:        spriteWorld = 64.0f; break;  // apartments/offices: tall
+            case BType::Industry:      spriteWorld = 72.0f; break;  // factories: tallest mass
+            case BType::PoliceStation:
+            case BType::Hospital:      spriteWorld = 58.0f; break;  // civic anchors
+            default:                   spriteWorld = 50.0f; break;
+        }
         float zoom = view_.cam.zoom;
-        int side = std::max(2, (int)std::lround(kBuildingSpriteWorld * vary * zoom));
+        int side = std::max(2, (int)std::lround(spriteWorld * zoom));
         int cx   = r.x + r.w / 2;                              // footprint centre (screen)
         SDL_Rect dst{ cx - side / 2, r.y + r.h - side, side, side };
 

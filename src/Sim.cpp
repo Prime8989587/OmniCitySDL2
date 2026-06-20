@@ -132,22 +132,25 @@ void World::generateBuildings() {
         b.windowSeed = (unsigned)irand(1, 1 << 30);
     };
 
-    // Free-placement city: scatter buildings with fixed per-type footprints at
-    // random positions, rejecting any that overlap an already-placed footprint.
-    // Their larger sprites overlap and depth-sort into an organic skyline, but
-    // the ground footprints never collide. Density derives from City Depth (no
-    // building-count setting): higher depth packs more, lower depth leaves gaps.
+    // Clustered city: buildings are grouped into neighborhood clusters with
+    // open gaps between them (not a uniform scatter). Each building keeps its
+    // fixed per-type footprint and is rejected if it overlaps any already-placed
+    // footprint, so bases never collide even when packed tight inside a cluster.
+    // Their taller sprites overlap and depth-sort into an organic skyline.
     const float inset = 8.0f;
-    float minX = inset, minY = inset;
 
-    // Try to place one building of `type`; returns true on success.
-    auto tryPlace = [&](BType type, int attempts) -> bool {
+    // Place one building of `type` whose footprint lies fully inside the box
+    // [boxX,boxX+boxW] x [boxY,boxY+boxH], rejecting overlaps against every
+    // building placed so far. Returns true on success.
+    auto tryPlaceIn = [&](BType type, float boxX, float boxY, float boxW, float boxH,
+                          int attempts) -> bool {
         float w, h; buildingFootprint(type, w, h);
-        float maxX = std::max(minX + 1.0f, s.worldW - inset - w);
-        float maxY = std::max(minY + 1.0f, s.worldH - inset - h);
+        float maxX = boxX + boxW - w;
+        float maxY = boxY + boxH - h;
+        if (maxX <= boxX || maxY <= boxY) return false;   // box too small for type
         for (int a = 0; a < attempts; ++a) {
-            float px = frand(minX, maxX);
-            float py = frand(minY, maxY);
+            float px = frand(boxX, maxX);
+            float py = frand(boxY, maxY);
             bool clear = true;
             for (const auto& ob : buildings) {
                 if (footprintsOverlap(px, py, w, h, ob.pos.x, ob.pos.y, ob.w, ob.h)) {
@@ -166,24 +169,59 @@ void World::generateBuildings() {
         return false;
     };
 
-    // Civic anchors first so they always fit.
-    tryPlace(BType::PoliceStation, 400);
-    tryPlace(BType::Hospital,      400);
+    // Civic anchors first (placed anywhere in the world) so they always fit.
+    tryPlaceIn(BType::PoliceStation, inset, inset,
+               s.worldW - 2 * inset, s.worldH - 2 * inset, 600);
+    tryPlaceIn(BType::Hospital, inset, inset,
+               s.worldW - 2 * inset, s.worldH - 2 * inset, 600);
 
-    // Depth-scaled target count: depth1 ~150 .. depth10 ~580 buildings.
-    int target = (int)(fillProbabilityForDepth(s.cityDepth) * 600.0f);
-    target = std::max(20, target);
-    int placed = 0, guard = 0, guardMax = target * 40 + 200;
-    while (placed < target && guard < guardMax) {
-        ++guard;
-        if (tryPlace(pickMixType(), 12)) ++placed;
+    // Divide the world into a grid of neighborhood cells. Higher City Depth =>
+    // more (and more reliably filled) clusters. Each active cell fills a
+    // centered sub-box, leaving a margin around it as "streets", so buildings
+    // form distinct clusters with gaps between them rather than an even spread.
+    int   gridN    = std::clamp(3 + s.cityDepth / 2, 3, 7);
+    float cellW    = s.worldW / gridN;
+    float cellH    = s.worldH / gridN;
+    float fillProb = fillProbabilityForDepth(s.cityDepth);          // 0.25 .. 0.97
+    float activeFr = std::min(1.0f, fillProb + 0.15f);             // chance a cell is built
+
+    // Overall depth-scaled target (depth1 ~150 .. depth10 ~580 buildings) shared
+    // out across the cells we expect to activate, so the map reads "full"
+    // regardless of how many cells happen to be skipped.
+    int target      = std::max(20, (int)(fillProb * 600.0f));
+    int activeCells = std::max(1, (int)std::lround(gridN * gridN * activeFr));
+    int perCluster  = std::max(4, target / activeCells);
+
+    for (int cy = 0; cy < gridN; ++cy) {
+        for (int cx = 0; cx < gridN; ++cx) {
+            // Skip some cells entirely (more at low depth) -> scattered hoods.
+            if (chance01() > activeFr) continue;
+
+            // Centered cluster body with a random street margin around it.
+            float margin = std::min(cellW, cellH) * frand(0.12f, 0.22f);
+            float boxX = cx * cellW + margin;
+            float boxY = cy * cellH + margin;
+            float boxW = cellW - 2 * margin;
+            float boxH = cellH - 2 * margin;
+            if (boxW < 40.0f || boxH < 40.0f) continue;
+
+            // Per-cluster target with jitter so neighborhoods vary in size.
+            int clusterTarget = perCluster + irand(-perCluster / 4, perCluster / 2);
+            int got = 0, guard = 0, guardMax = clusterTarget * 30 + 60;
+            while (got < clusterTarget && guard < guardMax) {
+                ++guard;
+                if (tryPlaceIn(pickMixType(), boxX, boxY, boxW, boxH, 8)) ++got;
+            }
+        }
     }
 }
 
 void World::generateTrees() {
     const auto& s = settings();
     trees.clear();
-    int n = std::max(0, s.numTrees);
+    // Plant the configured trees plus a depth-scaled bonus so the open gaps
+    // between building clusters fill in with greenery (denser cities = more).
+    int n = std::max(0, s.numTrees) + std::max(0, s.cityDepth) * 10;
     trees.reserve(n);
     for (int i = 0; i < n; ++i) {
         Tree t;
