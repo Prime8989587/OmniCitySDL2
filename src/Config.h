@@ -13,8 +13,8 @@ struct Settings {
     bool  fullscreen   = false;
     bool  vsync        = true;
 
-    float worldW       = 2400.0f;   // world units ("meters") — derived from cityDepth at start
-    float worldH       = 2400.0f;
+    float worldW       = 480.0f;    // small fixed world, all buildings visible at once
+    float worldH       = 480.0f;
 
     int   numAgents    = 1500;      // can push to ~10000
     int   numTrees     = 24;        // scattered decorative trees
