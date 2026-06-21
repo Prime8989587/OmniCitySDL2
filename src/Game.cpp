@@ -82,7 +82,7 @@ bool Game::init() {
         SDL_RenderSetLogicalSize(ren_, logW, logH);
         s.screenW = logW; s.screenH = logH;
         logicalActive_ = true;
-        SDL_Log("CristiVerse: %dx%d physical -> %dx%d logical", winPxW_, winPxH_, logW, logH);
+        SDL_Log("OmniVerse: %dx%d physical -> %dx%d logical", winPxW_, winPxH_, logW, logH);
     }
 #endif
 
@@ -1779,7 +1779,7 @@ void Game::renderHUD() {
                mode_ == GameMode::Sandbox ? SDL_Color{120, 220, 160, 255} : ui::textDim());
 
     // Version number in top-right corner
-    font::draw(ren_, "V.1.8 OmniVerse", s.screenW - 12, 8, 1, ui::textDim(), Align::Right);
+    font::draw(ren_, "V.1.11 OmniVerse", s.screenW - 12, 8, 1, ui::textDim(), Align::Right);
 
     // Role chips (compact so they never collide with the right-side readout).
     int x = 226;
@@ -2156,8 +2156,11 @@ void Game::renderMenu() {
 
     int cx = s.screenW / 2;
     float bob = std::sin(menuAnim_ * 1.5f) * 4.0f;
-    font::drawShadowed(ren_, "CRISTIVERSE", cx, (int)(s.screenH * 0.18f + bob), 10, ui::accent(), Align::Center);
+    font::drawShadowed(ren_, "OMNIVERSE", cx, (int)(s.screenH * 0.18f + bob), 10, ui::accent(), Align::Center);
     font::draw(ren_, "LOGOS ENGINE  -  SDL2 EDITION", cx, (int)(s.screenH * 0.18f) + 90, 2, ui::textDim(), Align::Center);
+
+    // Version number in top-right corner
+    font::draw(ren_, "V.1.11 OmniVerse", s.screenW - 12, 12, 1, ui::textDim(), Align::Right);
 
     // Buttons.
     int bw = 280, bh = 46, gap = 14;
