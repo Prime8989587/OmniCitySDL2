@@ -9,7 +9,7 @@
 *.dylib
 
 # Runtime artifacts (only the one written next to the executable at the repo root)
-/cristiverse.cfg
+/omniverse.cfg
 *.bmp
 *.png
 !docs/*.png

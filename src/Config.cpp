@@ -69,7 +69,7 @@ void Settings::loadFromFile(const std::string& path) {
 void Settings::saveToFile(const std::string& path) const {
     std::ofstream out(path);
     if (!out.is_open()) return;
-    out << "# CristiVerse settings — edit and restart.\n";
+    out << "# OmniVerse settings — edit and restart.\n";
     out << "screenW="      << screenW      << "\n";
     out << "screenH="      << screenH      << "\n";
     out << "fullscreen="   << (fullscreen ? 1 : 0) << "\n";

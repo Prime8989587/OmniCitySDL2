@@ -18,14 +18,14 @@ static const int   SIDE_W  = 308;
 // the historical behavior of a file next to the executable.
 static std::string configPath() {
 #ifdef __ANDROID__
-    char* pref = SDL_GetPrefPath("CristiVerse", "CristiVerse");
+    char* pref = SDL_GetPrefPath("OmniVerse", "OmniVerse");
     if (pref) {
-        std::string p = std::string(pref) + "cristiverse.cfg";
+        std::string p = std::string(pref) + "omniverse.cfg";
         SDL_free(pref);
         return p;
     }
 #endif
-    return "cristiverse.cfg";
+    return "omniverse.cfg";
 }
 
 // =====================================================================
@@ -47,7 +47,7 @@ bool Game::init() {
     Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE;
     if (s.fullscreen) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
 #endif
-    win_ = SDL_CreateWindow("CristiVerse — LogOS Engine (SDL2)",
+    win_ = SDL_CreateWindow("OmniVerse — LogOS Engine (SDL2)",
                             SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                             s.screenW, s.screenH, flags);
     if (!win_) { SDL_Log("CreateWindow: %s", SDL_GetError()); return false; }
@@ -306,7 +306,7 @@ void Game::handleEvents() {
                     if (k == SDLK_s && (ks2[SDL_SCANCODE_LCTRL] || ks2[SDL_SCANCODE_RCTRL])) {
                         std::string path = "layout.json";
 #ifdef __ANDROID__
-                        char* pref = SDL_GetPrefPath("CristiVerse", "CristiVerse");
+                        char* pref = SDL_GetPrefPath("OmniVerse", "OmniVerse");
                         if (pref) { path = std::string(pref) + "layout.json"; SDL_free(pref); }
 #endif
                         saveLayout(path);
@@ -314,7 +314,7 @@ void Game::handleEvents() {
                     if (k == SDLK_l && (ks2[SDL_SCANCODE_LCTRL] || ks2[SDL_SCANCODE_RCTRL])) {
                         std::string path = "layout.json";
 #ifdef __ANDROID__
-                        char* pref = SDL_GetPrefPath("CristiVerse", "CristiVerse");
+                        char* pref = SDL_GetPrefPath("OmniVerse", "OmniVerse");
                         if (pref) { path = std::string(pref) + "layout.json"; SDL_free(pref); }
 #endif
                         loadLayout(path);
@@ -1774,9 +1774,12 @@ void Game::renderHUD() {
     draw::fillRect(ren_, bar, {16, 20, 30, 245});
     draw::line(ren_, 0, HUD_H, s.screenW, HUD_H, {60, 80, 120, 255});
 
-    font::drawShadowed(ren_, "CRISTIVERSE", 14, 8, 3, ui::accent());
+    font::drawShadowed(ren_, "OMNIVERSE", 14, 8, 3, ui::accent());
     font::draw(ren_, mode_ == GameMode::Sandbox ? "SANDBOX MODE" : "LOGOS ENGINE", 14, 32, 1,
                mode_ == GameMode::Sandbox ? SDL_Color{120, 220, 160, 255} : ui::textDim());
+
+    // Version number in top-right corner
+    font::draw(ren_, "V.1.8 OmniVerse", s.screenW - 12, 8, 1, ui::textDim(), Align::Right);
 
     // Role chips (compact so they never collide with the right-side readout).
     int x = 226;
@@ -1947,7 +1950,7 @@ void Game::renderSidebar() {
         SDL_Rect load{ x + bw2 + 4, y, bw2, 24 };
         std::string savePath = "layout.json";
 #ifdef __ANDROID__
-        char* pref = SDL_GetPrefPath("CristiVerse", "CristiVerse");
+        char* pref = SDL_GetPrefPath("OmniVerse", "OmniVerse");
         if (pref) { savePath = std::string(pref) + "layout.json"; SDL_free(pref); }
 #endif
         if (ui::button(ren_, save, "SAVE (S)", in_, {100, 200, 150, 255}, 1)) { saveLayout(savePath); }

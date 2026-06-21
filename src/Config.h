@@ -1,5 +1,5 @@
 // Config.h — compile-time defaults and a runtime-tunable Settings struct.
-// CristiVerse / LogOS Engine — SDL2 redesign (C++17, pure SDL2).
+// OmniVerse / LogOS Engine — SDL2 redesign (C++17, pure SDL2).
 #pragma once
 #include <string>
 #include <algorithm>
