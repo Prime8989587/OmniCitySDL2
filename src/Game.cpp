@@ -59,6 +59,7 @@ bool Game::init() {
         if (!ren_) { SDL_Log("CreateRenderer: %s", SDL_GetError()); return false; }
     }
     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");  // nearest-neighbour for crisp pixel-art
 
     // Load the player-supplied sprite art (buildings/roads/etc.). Missing art is
     // harmless: renderers fall back to the original procedural look.
@@ -89,9 +90,10 @@ bool Game::init() {
 
     adjustWorldForDepth();
     world_.regenerate();
+    syncSpriteSizes();
 
-    view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.55f);
     layoutView();
+    fitCameraToWorld();
     state_ = GState::Menu;
     fade_ = 1.0f;
     return true;
@@ -127,19 +129,20 @@ bool Game::initHeadless() {
     ren_ = SDL_CreateSoftwareRenderer(shotSurface_);
     if (!ren_) { SDL_Log("software renderer: %s", SDL_GetError()); return false; }
     SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");  // nearest-neighbour for crisp pixel-art
     textures_.init(ren_);
     textures_.loadAll();
     adjustWorldForDepth();
     world_.regenerate();
-    view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.9f);
+    syncSpriteSizes();
     layoutView();
+    fitCameraToWorld();
     return true;
 }
 
 void Game::captureFrames(const char* path, int frames) {
     startNewGame();
     fade_ = 0.0f;
-    view_.cam.snap(settings().worldW * 0.5f, settings().worldH * 0.5f, 0.9f);
     for (int i = 0; i < frames; ++i) {
         update(1.0f / 60.0f);
         render();
@@ -489,14 +492,23 @@ void Game::setSpeed(int idx) {
     simSpeed_ = kSpeeds[speedIndex_];
 }
 
-// Derive the world bounds from the City Depth setting. Always computed from a
-// fixed reference (never from the previous worldW) so repeated rebuilds don't
-// compound. Higher depth => smaller, denser world.
+// Fit camera to world: compute zoom so the entire world is visible with a 5%
+// margin. Must be called AFTER layoutView() has set viewW/viewH.
+void Game::fitCameraToWorld() {
+    auto& s = settings();
+    float zoomX = view_.viewW / s.worldW;
+    float zoomY = view_.viewH / s.worldH;
+    float zoom = std::min(zoomX, zoomY) * 0.95f;
+    view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, zoom);
+}
+
+// Set world to a small fixed size (no longer depth-scaled). City Depth now
+// controls building count instead. The small world ensures all ~20 buildings
+// fit on screen at once, creating a dense, intimate neighborhood.
 void Game::adjustWorldForDepth() {
     auto& s = settings();
-    float size = worldSizeForDepth(s.cityDepth);
-    s.worldW = size;
-    s.worldH = size;
+    s.worldW = 480.0f;   // small fixed world, tuned for ~20 buildings visible at once
+    s.worldH = 480.0f;
 }
 
 void Game::startNewGame() {
@@ -504,7 +516,14 @@ void Game::startNewGame() {
     mode_ = GameMode::Survival;
     adjustWorldForDepth();
     world_.regenerate();
-    view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.55f);
+    syncSpriteSizes();
+    // Fit camera to show the whole world (accounting for HUD/sidebar at first render)
+    float screenViewW = s.screenW - SIDE_W;  // width available for world view
+    float screenViewH = s.screenH - HUD_H;   // height available for world view
+    float zoomX = screenViewW / s.worldW;
+    float zoomY = screenViewH / s.worldH;
+    float zoom = std::min(zoomX, zoomY) * 0.95f;
+    view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, zoom);
     selectedId_ = -1;
     budget_ = 200.0f;
     safety_ = 100.0f;
@@ -527,7 +546,14 @@ void Game::startSandbox() {
     mode_ = GameMode::Sandbox;
     adjustWorldForDepth();
     world_.regenerate();
-    view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.55f);
+    syncSpriteSizes();
+    // Fit camera to show the whole world (accounting for HUD/sidebar at first render)
+    float screenViewW = s.screenW - SIDE_W;  // width available for world view
+    float screenViewH = s.screenH - HUD_H;   // height available for world view
+    float zoomX = screenViewW / s.worldW;
+    float zoomY = screenViewH / s.worldH;
+    float zoom = std::min(zoomX, zoomY) * 0.95f;
+    view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, zoom);
     selectedId_ = -1;
     budget_ = 0.0f;            // unused — sandbox is free
     safety_ = 100.0f;
@@ -636,6 +662,17 @@ void Game::placeBuildingAt(int sx, int sy) {
     b.variant = irand(0, 3);
     b.windowSeed = (unsigned)irand(1, 1 << 30);
 
+    // Sync to actual sprite size (overrides the footprint default).
+    SDL_Texture* tex = buildingTexture(b);
+    if (tex) {
+        int w = 0, h = 0;
+        SDL_QueryTexture(tex, nullptr, nullptr, &w, &h);
+        if (w > 0 && h > 0) {
+            b.w = (float)w;
+            b.h = (float)h;
+        }
+    }
+
     // Push undo snapshot before adding building (in Sandbox only)
     if (mode_ == GameMode::Sandbox) pushUndoSnapshot();
 
@@ -659,9 +696,10 @@ bool Game::buildingsOverlap(const Building& a, const Building& b) const {
 }
 
 // Validate a free (un-snapped) placement of `type` centered on the cursor.
-// Writes the resulting footprint pos/size; returns false if it would leave the
-// world or overlap an existing footprint (skipIdx is ignored, for dragging).
-bool Game::validateBuildingPlacement(float wx, float wy, BType type, int skipIdx,
+// Writes the resulting footprint pos/size; returns false only if it would leave
+// the world bounds. OVERLAP IS ALLOWED — buildings can nestle freely.
+bool Game::validateBuildingPlacement(float wx, float wy, BType type,
+                                     int, // skipIdx unused (was for drag validation)
                                      Vec2& outPos, float& outW, float& outH) {
     auto& s = settings();
     buildingFootprint(type, outW, outH);
@@ -671,12 +709,6 @@ bool Game::validateBuildingPlacement(float wx, float wy, BType type, int skipIdx
         outPos.y < 8.0f || outPos.y + outH > s.worldH - 8.0f)
         return false;
 
-    Building test;
-    test.pos = outPos; test.w = outW; test.h = outH; test.type = type;
-    for (size_t i = 0; i < world_.buildings.size(); ++i) {
-        if ((int)i == skipIdx) continue;              // skip the dragged building
-        if (buildingsOverlap(test, world_.buildings[i])) return false;
-    }
     return true;
 }
 
@@ -1062,9 +1094,9 @@ void Game::renderWorld() {
         buildingOccluded_[i] = occ ? 1 : 0;
     }
 
-    // Painter's pass: buildings, trees, agents, and traffic interleaved by base
-    // Y so items lower on screen draw in front and higher ones draw behind.
-    struct Item { float key; int type; int idx; }; // 0=building 1=tree 2=agent 3=vehicle
+    // Painter's pass: buildings, trees, and agents interleaved by base Y so
+    // items lower on screen draw in front and higher ones draw behind.
+    struct Item { float key; int type; int idx; }; // 0=building 1=tree 2=agent
     static std::vector<Item> items;
     items.clear();
     for (int i = 0; i < (int)world_.buildings.size(); ++i) {
@@ -1078,8 +1110,6 @@ void Game::renderWorld() {
         if (!a.alive || a.sleeping) continue;
         items.push_back({ a.pos.y, 2, i });
     }
-    for (int i = 0; i < (int)world_.vehicles.size(); ++i)
-        items.push_back({ world_.vehicles[i].pos.y, 3, i });
     std::sort(items.begin(), items.end(),
               [](const Item& a, const Item& b) { return a.key < b.key; });
     for (const Item& it : items) {
@@ -1087,7 +1117,6 @@ void Game::renderWorld() {
                                               buildingOccluded_[it.idx] ? (Uint8)175 : (Uint8)255);
         else if (it.type == 1) renderTree(world_.trees[it.idx]);
         else if (it.type == 2) renderAgent(world_.agents[it.idx]);
-        else                   renderVehicle(world_.vehicles[it.idx]);
     }
 
     // Sandbox placement preview (green if valid, red if invalid)
@@ -1358,54 +1387,30 @@ void Game::renderBuilding(const Building& b, Uint8 alpha) {
     auto A = [&](SDL_Color c) { c.a = (Uint8)((int)c.a * alpha / 255); return c; };
 
     // ---- Sprite path: draw the player's PNG/BMP building art. -------------
-    // The sprite size is driven by a single base constant (NOT the plot
-    // footprint b.w/b.h — that was the old bug where `side = r.w` made each
-    // building a wildly different size). The footprint only supplies the
-    // horizontal centre and bottom edge, so each building "rises" from its spot
-    // and depth-sorts by its base. Buildings are kept small so a cluster of them
-    // packs into one block and overlaps into a skyline.
+    // Sprites render at NATIVE resolution: `b.w` and `b.h` are set to the
+    // source PNG's actual dimensions (e.g., 48×48). The world → screen transform
+    // scales them by zoom; at zoom 1.0, one world unit == one screen pixel, so
+    // the art is pixel-perfect. The footprint (screen rect `r`) anchors the
+    // sprite bottom-center at the base of the building.
     if (SDL_Texture* tex = buildingTexture(b)) {
-        // Buildings are deliberately small so several pack into one block and
-        // their sprites overlap into a skyline (clusters, not lone cubes). The
-        // sprite size is FIXED per building TYPE — every house renders at one
-        // size, every apartment/office at another, every factory at another —
-        // so a given type is always visually identical (no per-instance random
-        // scaling). Taller types get a larger sprite so the skyline still reads
-        // as a real mix of low houses and tall towers.
-        float spriteWorld;
-        switch (b.type) {
-            case BType::Residential:   spriteWorld = 44.0f; break;  // houses: low-rise
-            case BType::Office:        spriteWorld = 64.0f; break;  // apartments/offices: tall
-            case BType::Industry:      spriteWorld = 72.0f; break;  // factories: tallest mass
-            case BType::PoliceStation:
-            case BType::Hospital:      spriteWorld = 58.0f; break;  // civic anchors
-            default:                   spriteWorld = 50.0f; break;
-        }
-        float zoom = view_.cam.zoom;
-        int side = std::max(2, (int)std::lround(spriteWorld * zoom));
-        int cx   = r.x + r.w / 2;                              // footprint centre (screen)
-        SDL_Rect dst{ cx - side / 2, r.y + r.h - side, side, side };
-
-        if (settings().shadows) {
-            int off = (int)clampf(b.h * 0.08f * zoom, 3.0f, 24.0f);
-            int shh = std::max(2, side / 6);
-            SDL_Rect sh{ dst.x + off, r.y + r.h - shh + off / 2, side, shh };
-            draw::fillRect(ren_, sh, {0, 0, 0, (Uint8)(shadowAlpha() * 110)});
-        }
+        // `r` is already the screen rect of the footprint (b.pos, b.w, b.h).
+        // Anchor the sprite at the footprint's bottom-center.
+        int cx = r.x + r.w / 2;                        // screen x-center
+        SDL_Rect dst{ cx - r.w / 2, r.y + r.h - r.h, r.w, r.h };  // bottom-anchored
 
         SDL_SetTextureAlphaMod(tex, alpha);          // occlusion x-ray support
         SDL_RenderCopy(ren_, tex, nullptr, &dst);
         SDL_SetTextureAlphaMod(tex, 255);
 
         // Keep the identifying markers for special buildings on top of the art.
-        if (b.type == BType::Hospital && side > 18) {
-            int cx = dst.x + side / 2, cy = dst.y + side / 2;
-            int sz = std::max(4, side / 7);
+        if (b.type == BType::Hospital && r.w > 18) {
+            int cx = dst.x + r.w / 2, cy = dst.y + r.h / 2;
+            int sz = std::max(4, r.w / 7);
             draw::fillRect(ren_, {cx - sz / 3, cy - sz, (2 * sz) / 3, 2 * sz}, A({226, 56, 56, 255}));
             draw::fillRect(ren_, {cx - sz, cy - sz / 3, 2 * sz, (2 * sz) / 3}, A({226, 56, 56, 255}));
-        } else if (b.type == BType::PoliceStation && side > 18) {
-            int cx = dst.x + side / 2, cy = dst.y + side / 3;
-            int sz = std::max(3, side / 9);
+        } else if (b.type == BType::PoliceStation && r.w > 18) {
+            int cx = dst.x + r.w / 2, cy = dst.y + r.h / 3;
+            int sz = std::max(3, r.w / 9);
             draw::fillRect(ren_, {cx - sz, cy - sz, 2 * sz, 2 * sz}, A({240, 218, 90, 255}));
             draw::fillRect(ren_, {cx - sz + 2, cy - sz + 2, 2 * sz - 4, 2 * sz - 4}, A({58, 96, 206, 255}));
         }
@@ -1506,11 +1511,10 @@ void Game::renderTree(const Tree& t) {
                        {0, 0, 0, (Uint8)(shadowAlpha() * 120)});
     }
 
-    // Sprite path: draw the player's tree art, square (1:1) and anchored so its
-    // base sits at the trunk position. Falls through to procedural trees if the
-    // art is missing.
+    // Sprite path: draw the player's tree art at native resolution (16×16 world
+    // units, scaled by zoom). Base anchored at the trunk position.
     if (SDL_Texture* tex = textures_.get("tree.bmp")) {
-        int side = std::max(4, (int)(t.height * zoom * 1.6f));
+        int side = std::max(4, (int)std::lround(16.0f * zoom));
         SDL_Rect dst{ sx - side / 2, sy - side, side, side };
         SDL_RenderCopy(ren_, tex, nullptr, &dst);
         return;
@@ -1672,6 +1676,30 @@ void Game::renderAgent(const Agent& a) {
     if (rad >= 6 && a.stress > 0.5f) {
         SDL_Rect bar{ sx - bw / 2, top - 4, (int)(bw * a.stress), 2 };
         draw::fillRect(ren_, bar, {240, 80, 60, 220});
+    }
+}
+
+// Sync building world sizes to their sprite native dimensions. After world
+// generation, iterate each building and set w/h from the texture's actual
+// pixel width/height via SDL_QueryTexture(). This makes every building's
+// footprint, Y-sort key, and rendered size all use the true per-file native
+// dimensions. Parks stay lawn-sized; other buildings adopt their sprite size.
+void Game::syncSpriteSizes() {
+    for (auto& b : world_.buildings) {
+        if (b.type == BType::Park) continue;  // parks are open lawns, keep small
+        SDL_Texture* tex = buildingTexture(b);
+        if (tex) {
+            int w = 0, h = 0;
+            SDL_QueryTexture(tex, nullptr, nullptr, &w, &h);
+            if (w > 0 && h > 0) {
+                b.w = (float)w;
+                b.h = (float)h;
+            }
+        } else {
+            // Fallback: use default native size (48×48 for all building types)
+            b.w = 48.0f;
+            b.h = 48.0f;
+        }
     }
 }
 
@@ -2238,6 +2266,7 @@ void Game::renderSettingsScreen() {
         audio_.click(); settings().saveToFile(configPath());
         adjustWorldForDepth();
         world_.regenerate();
+        syncSpriteSizes();
         view_.cam.snap(s.worldW * 0.5f, s.worldH * 0.5f, 0.55f);
         toast("Settings saved. World rebuilt.");
     }

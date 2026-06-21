@@ -17,11 +17,11 @@ struct Settings {
     float worldH       = 2400.0f;
 
     int   numAgents    = 1500;      // can push to ~10000
-    int   numTrees     = 180;       // scattered decorative trees (plus a depth bonus)
+    int   numTrees     = 24;        // scattered decorative trees
 
-    // City density: 1 = sparse/spread out, 10 = small & tightly packed. Drives
-    // the world size, the road-grid spacing, and how buildings fill the blocks
-    // so a higher depth yields a compact, lively city instead of empty sprawl.
+    // City Depth: 1–10 slider controlling building count in a small fixed world.
+    // depth1 ≈ 10 buildings, depth7 ≈ 21, depth10 ≈ 30. Each building renders
+    // at native sprite resolution. Agents spawn based on population, not buildings.
     int   cityDepth    = 7;         // 1..10
 
     // Building-type distribution for auto-generated cities. These are *weights*

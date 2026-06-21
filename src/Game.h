@@ -131,6 +131,7 @@ private:
     void renderTree(const Tree& t);
     void renderAgent(const Agent& a);
     void renderVehicle(const Vehicle& v);           // cosmetic background traffic
+    void syncSpriteSizes();                         // set building w/h from texture dimensions
     // Sprite helpers (return nullptr when art is missing -> procedural fallback).
     SDL_Texture* buildingTexture(const Building& b) const; // day/night + lit pick
     bool renderRoadSprites();                              // tiled asphalt grid
@@ -167,7 +168,8 @@ private:
     void redoLastAction();
     bool saveLayout(const std::string& filename);
     bool loadLayout(const std::string& filename);
-    void adjustWorldForDepth();        // set world size from settings().cityDepth
+    void adjustWorldForDepth();        // set world to small fixed size
+    void fitCameraToWorld();           // zoom so entire world is visible
     void setSpeed(int idx);
     void deployAt(int sx, int sy);
     void placeBuildingAt(int sx, int sy);   // custom player-placed building
